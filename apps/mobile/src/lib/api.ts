@@ -1,7 +1,8 @@
 import { isDemoAccessToken } from "./demoSession";
 
 const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? "http://10.0.2.2:8080/api/v1";
+  process.env.EXPO_PUBLIC_API_URL ??
+  "https://attendanceapi.bggold.cloud/api/v1";
 
 export type TokenPair = {
   accessToken: string;
@@ -59,6 +60,14 @@ export type Employee = {
   jobTitle?: string;
   status: string;
   roles: string[];
+};
+export type CreateEmployeePayload = {
+  fullName: string;
+  email: string;
+  employeeNumber: string;
+  jobTitle: string;
+  password: string;
+  roles: Array<"EMPLOYEE" | "SUPERVISOR">;
 };
 export type Section = {
   id: string;
@@ -334,6 +343,12 @@ export const api = {
   me: (token: string) => request<Me>("/me", {}, token),
   organizations: (token: string) =>
     request<Organization[]>("/me/organizations", {}, token),
+  createEmployee: (token: string, payload: CreateEmployeePayload) =>
+    request<{ id: string; invitationStatus: string }>(
+      "/employees",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
   switchOrganization: (token: string, organizationId: string) =>
     request<TokenPair>(
       "/me/active-organization",

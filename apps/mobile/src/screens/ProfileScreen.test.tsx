@@ -24,6 +24,7 @@ jest.mock("../lib/api", () => ({
     organizations: jest.fn(),
     faceImage: jest.fn(),
     enrollFace: jest.fn(),
+    createEmployee: jest.fn(),
   },
 }));
 jest.mock("expo-image-picker",()=>({CameraType:{front:"front"},requestCameraPermissionsAsync:jest.fn(async()=>({granted:true})),launchCameraAsync:jest.fn(async()=>({canceled:false,assets:[{uri:"file:///face.jpg",mimeType:"image/jpeg"}]}))}));

@@ -87,6 +87,16 @@ export async function demoRequest<T>(
     ) as T;
   }
   if (path === "/me/organizations") return clone(DEMO_ORGANIZATIONS) as T;
+  if (path === "/employees" && method === "POST") {
+    const requestedRoles = Array.isArray(input.roles) ? input.roles : [];
+    if (demoRole !== "supervisor" || requestedRoles.some((role) => role !== "EMPLOYEE")) {
+      throw new APIError(403, "ROLE_ASSIGNMENT_FORBIDDEN", "Supervisor hanya dapat membuat akun karyawan.");
+    }
+    return {
+      id: `demo-employee-${Date.now()}`,
+      invitationStatus: "NOT_REQUIRED",
+    } as T;
+  }
   if (path === "/me/active-organization" && method === "POST") {
     return createDemoSession(demoRole) as T;
   }

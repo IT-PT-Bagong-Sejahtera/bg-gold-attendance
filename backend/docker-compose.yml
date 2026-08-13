@@ -115,8 +115,8 @@ services:
     entrypoint: ["/seed"]
     environment:
       MYSQL_DSN: ${MYSQL_DSN:?set MYSQL_DSN in .env}
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?set SEED_ADMIN_EMAIL in .env}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
+      SEED_SUPERADMIN_EMAIL: ${SEED_SUPERADMIN_EMAIL:?set SEED_SUPERADMIN_EMAIL in .env}
+      SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:?set SEED_SUPERADMIN_PASSWORD in .env}
     depends_on:
       mysql:
         condition: service_healthy

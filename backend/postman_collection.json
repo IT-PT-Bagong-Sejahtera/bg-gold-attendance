@@ -19,7 +19,7 @@
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@bggold.local\",\n  \"password\": \"change-me\"\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"superadmin@bggold.local\",\n  \"password\": \"change-me\"\n}" },
         "url": "{{baseUrl}}/api/v1/auth/login"
       }
     },

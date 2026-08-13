@@ -84,6 +84,34 @@ it("creates an isolated supervisor identity and persistent approval queue", asyn
   });
 });
 
+it("lets the demo supervisor create only an employee account", async () => {
+  await expect(
+    demoRequest(
+      "/employees",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          email: "new@bggold.local",
+          password: "AmanSekali-2026!",
+          roles: ["EMPLOYEE"],
+        }),
+      },
+      DEMO_SUPERVISOR_ACCESS_TOKEN,
+    ),
+  ).resolves.toMatchObject({ invitationStatus: "NOT_REQUIRED" });
+
+  await expect(
+    demoRequest(
+      "/employees",
+      {
+        method: "POST",
+        body: JSON.stringify({ roles: ["SUPERVISOR"] }),
+      },
+      DEMO_SUPERVISOR_ACCESS_TOKEN,
+    ),
+  ).rejects.toThrow("Supervisor hanya dapat membuat akun karyawan");
+});
+
 it("provides an all-employee attendance report for supervisor export", async () => {
   const report = await demoRequest<SupervisorAttendanceReport>(
     "/attendance/report",

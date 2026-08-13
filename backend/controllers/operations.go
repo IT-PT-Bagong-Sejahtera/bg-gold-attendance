@@ -146,6 +146,11 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 	if len(in.Roles) == 0 {
 		in.Roles = []string{"EMPLOYEE"}
 	}
+	roleCodes := normalizeRoleCodes(in.Roles)
+	if len(roleCodes) == 0 {
+		writeValidation(w, r, "Sedikitnya satu peran wajib dipilih.")
+		return
+	}
 	userID, _ := identity.NewUUID()
 	membershipID, _ := identity.NewUUID()
 	credential := in.Password
@@ -163,6 +168,15 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	actorIsOwner, err := membershipHasRole(r.Context(), tx, p.MembershipID, "OWNER")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if assignmentError := validateCreatedRoles(actorIsOwner, roleCodes); assignmentError != nil {
+		httpx.WriteError(w, r, assignmentError)
+		return
+	}
 	var existingUserID string
 	newUser := false
 	err = tx.QueryRowContext(r.Context(), `SELECT BIN_TO_UUID(id) FROM users WHERE email=?`, in.Email).Scan(&existingUserID)
@@ -186,8 +200,8 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 		writeConflict(w, r, "EMPLOYEE_NUMBER_EXISTS", "Nomor karyawan sudah digunakan.", err)
 		return
 	}
-	for _, code := range in.Roles {
-		result, execErr := tx.ExecContext(r.Context(), `INSERT INTO membership_roles(membership_id,role_id) SELECT UUID_TO_BIN(?),id FROM roles WHERE code=? AND (organization_id=UUID_TO_BIN(?) OR organization_id IS NULL) LIMIT 1`, membershipID, strings.ToUpper(code), p.OrganizationID)
+	for _, code := range roleCodes {
+		result, execErr := tx.ExecContext(r.Context(), `INSERT INTO membership_roles(membership_id,role_id) SELECT UUID_TO_BIN(?),id FROM roles WHERE code=? AND (organization_id=UUID_TO_BIN(?) OR organization_id IS NULL) LIMIT 1`, membershipID, code, p.OrganizationID)
 		if execErr != nil {
 			httpx.WriteError(w, r, execErr)
 			return
@@ -253,14 +267,10 @@ func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
 		writeValidation(w, r, "Nama, nomor karyawan, dan sedikitnya satu peran wajib diisi.")
 		return
 	}
-	roleCodes := make([]string, 0, len(in.Roles))
-	seen := map[string]bool{}
-	for _, raw := range in.Roles {
-		code := strings.ToUpper(strings.TrimSpace(raw))
-		if code != "" && !seen[code] {
-			seen[code] = true
-			roleCodes = append(roleCodes, code)
-		}
+	roleCodes := normalizeRoleCodes(in.Roles)
+	seen := make(map[string]bool, len(roleCodes))
+	for _, code := range roleCodes {
+		seen[code] = true
 	}
 	if len(roleCodes) == 0 {
 		writeValidation(w, r, "Sedikitnya satu peran wajib dipilih.")
@@ -282,13 +292,27 @@ func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	actorIsOwner, err := membershipHasRole(r.Context(), tx, p.MembershipID, "OWNER")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	targetIsOwner, err := membershipHasRole(r.Context(), tx, employeeID, "OWNER")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	targetIsPrivileged, err := membershipHasAnyRole(r.Context(), tx, employeeID, []string{"OWNER", "ADMIN", "HR", "SUPERVISOR"})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if assignmentError := validateUpdatedRoles(actorIsOwner, targetIsOwner, targetIsPrivileged, roleCodes); assignmentError != nil {
+		httpx.WriteError(w, r, assignmentError)
+		return
+	}
 	if employeeID == p.MembershipID {
-		var owns bool
-		if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM membership_roles mr JOIN roles ro ON ro.id=mr.role_id WHERE mr.membership_id=UUID_TO_BIN(?) AND ro.code='OWNER')`, employeeID).Scan(&owns); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-		if owns && !seen["OWNER"] {
+		if targetIsOwner && !seen["OWNER"] {
 			httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SELF_OWNER_ROLE_REMOVAL_FORBIDDEN", Message: "Anda tidak dapat menghapus peran Owner dari akun sendiri."})
 			return
 		}
@@ -330,6 +354,74 @@ func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": employeeID, "fullName": in.FullName, "employeeNumber": in.EmployeeNumber, "jobTitle": in.JobTitle, "roles": roleCodes}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func normalizeRoleCodes(rawRoles []string) []string {
+	roleCodes := make([]string, 0, len(rawRoles))
+	seen := make(map[string]bool, len(rawRoles))
+	for _, raw := range rawRoles {
+		code := strings.ToUpper(strings.TrimSpace(raw))
+		if code != "" && !seen[code] {
+			seen[code] = true
+			roleCodes = append(roleCodes, code)
+		}
+	}
+	return roleCodes
+}
+
+func validateCreatedRoles(actorIsOwner bool, roleCodes []string) *httpx.Error {
+	if !actorIsOwner {
+		if len(roleCodes) == 1 && roleCodes[0] == "EMPLOYEE" {
+			return nil
+		}
+		return &httpx.Error{Status: http.StatusForbidden, Code: "ROLE_ASSIGNMENT_FORBIDDEN", Message: "Supervisor hanya dapat membuat akun karyawan."}
+	}
+	for _, code := range roleCodes {
+		switch code {
+		case "EMPLOYEE", "SUPERVISOR", "ADMIN", "HR":
+		default:
+			return &httpx.Error{Status: http.StatusForbidden, Code: "ROLE_ASSIGNMENT_FORBIDDEN", Message: "Superadmin tidak dapat membuat Superadmin tambahan dari menu ini."}
+		}
+	}
+	return nil
+}
+
+func validateUpdatedRoles(actorIsOwner, targetIsOwner, targetIsPrivileged bool, roleCodes []string) *httpx.Error {
+	if !actorIsOwner {
+		if targetIsPrivileged || len(roleCodes) != 1 || roleCodes[0] != "EMPLOYEE" {
+			return &httpx.Error{Status: http.StatusForbidden, Code: "ROLE_ASSIGNMENT_FORBIDDEN", Message: "Perubahan peran khusus hanya dapat dilakukan oleh Superadmin."}
+		}
+		return nil
+	}
+	for _, code := range roleCodes {
+		if code == "OWNER" && !targetIsOwner {
+			return &httpx.Error{Status: http.StatusForbidden, Code: "ROLE_ASSIGNMENT_FORBIDDEN", Message: "Sistem hanya menyediakan satu akun Superadmin."}
+		}
+	}
+	return nil
+}
+
+func membershipHasRole(ctx context.Context, tx *sql.Tx, membershipID, roleCode string) (bool, error) {
+	return membershipHasAnyRole(ctx, tx, membershipID, []string{roleCode})
+}
+
+func membershipHasAnyRole(ctx context.Context, tx *sql.Tx, membershipID string, roleCodes []string) (bool, error) {
+	if len(roleCodes) == 0 {
+		return false, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(roleCodes)), ",")
+	arguments := make([]any, 0, len(roleCodes)+1)
+	arguments = append(arguments, membershipID)
+	for _, code := range roleCodes {
+		arguments = append(arguments, code)
+	}
+	var exists bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM membership_roles mr
+		JOIN roles ro ON ro.id=mr.role_id
+		WHERE mr.membership_id=UUID_TO_BIN(?) AND ro.code IN (`+placeholders+`)
+	)`, arguments...).Scan(&exists)
+	return exists, err
 }
 
 func (s *Server) deactivateEmployee(w http.ResponseWriter, r *http.Request) {

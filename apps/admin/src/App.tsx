@@ -432,6 +432,7 @@ function Dashboard() {
         </div>
         <OperationsDirectory
           token={token}
+          actorRoles={me.data?.roles ?? []}
           employees={employees.data ?? []}
           sections={sections.data ?? []}
           policies={policies.data ?? []}
@@ -657,6 +658,7 @@ type AuditLogAdmin = {
 
 function OperationsDirectory({
   token,
+  actorRoles,
   employees,
   sections,
   policies,
@@ -682,6 +684,7 @@ function OperationsDirectory({
   onShiftRequestDecided,
 }: {
   token: string;
+  actorRoles: string[];
   employees: Employee[];
   sections: Section[];
   policies: Policy[];
@@ -804,7 +807,11 @@ function OperationsDirectory({
             employees={employees}
             onChanged={onEmployeesChanged}
           />
-          <QuickEmployeeForm token={token} onCreated={onEmployeesChanged} />
+          <QuickEmployeeForm
+            token={token}
+            actorRoles={actorRoles}
+            onCreated={onEmployeesChanged}
+          />
         </article>
         <article id="schedule" className="resource-panel">
           <div className="resource-head">
@@ -1917,17 +1924,21 @@ function EmployeeEditor({
 
 function QuickEmployeeForm({
   token,
+  actorRoles,
   onCreated,
 }: {
   token: string;
+  actorRoles: string[];
   onCreated: () => void;
 }) {
+  const isSuperadmin = actorRoles.includes("OWNER");
   const [open, setOpen] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState("");
+  const [accountRole, setAccountRole] = useState<"EMPLOYEE" | "SUPERVISOR">("EMPLOYEE");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1950,7 +1961,7 @@ function QuickEmployeeForm({
             employeeNumber,
             jobTitle,
             password: password || undefined,
-            roles: ["EMPLOYEE"],
+            roles: [accountRole],
           }),
         },
         token,
@@ -1960,15 +1971,18 @@ function QuickEmployeeForm({
       setEmployeeNumber("");
       setJobTitle("");
       setPassword("");
+      setAccountRole("EMPLOYEE");
       setOpen(false);
       setNotice(
         created.invitationStatus === "SENT"
-          ? "Undangan akun telah dikirim ke email karyawan."
+          ? accountRole === "SUPERVISOR"
+            ? "Undangan akun telah dikirim ke email supervisor."
+            : "Undangan akun telah dikirim ke email karyawan."
           : created.developmentInviteToken
             ? `Mode lokal · token undangan: ${created.developmentInviteToken}`
             : created.invitationStatus === "NOT_REQUIRED"
-              ? "Karyawan ditambahkan menggunakan kredensial yang tersedia."
-              : "Karyawan dibuat, tetapi email undangan belum terkirim.",
+              ? `${accountRole === "SUPERVISOR" ? "Supervisor" : "Karyawan"} ditambahkan dan sudah dapat masuk.`
+              : "Akun dibuat, tetapi email undangan belum terkirim.",
       );
       onCreated();
     } catch (reason) {
@@ -2023,6 +2037,29 @@ function QuickEmployeeForm({
         Jabatan
         <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
       </label>
+      {isSuperadmin ? (
+        <fieldset className="form-span role-picker">
+          <legend>Jenis akun</legend>
+          <label>
+            <input
+              type="radio"
+              name="account-role"
+              checked={accountRole === "EMPLOYEE"}
+              onChange={() => setAccountRole("EMPLOYEE")}
+            />
+            Karyawan
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="account-role"
+              checked={accountRole === "SUPERVISOR"}
+              onChange={() => setAccountRole("SUPERVISOR")}
+            />
+            Supervisor
+          </label>
+        </fieldset>
+      ) : null}
       <label className="form-span">
         Kata sandi sementara (opsional)
         <input
@@ -2036,7 +2073,13 @@ function QuickEmployeeForm({
       {error ? <small className="form-error form-span">{error}</small> : null}
       <div className="form-span">
         <button className="small-primary" disabled={saving}>
-          {saving ? "Menyimpan…" : password ? "Buat karyawan" : "Kirim undangan"}
+          {saving
+            ? "Menyimpan…"
+            : password
+              ? accountRole === "SUPERVISOR"
+                ? "Buat supervisor"
+                : "Buat karyawan"
+              : "Kirim undangan"}
         </button>
         <button
           type="button"

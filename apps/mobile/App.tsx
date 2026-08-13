@@ -89,7 +89,9 @@ function Root() {
     return <LoginScreen />;
   }
 
-  const isSupervisor = roles?.includes("SUPERVISOR") ?? false;
+  const isSupervisor = roles?.some(
+    (role) => role === "SUPERVISOR" || role === "OWNER",
+  ) ?? false;
 
   return (
     <NavigationContainer theme={theme}>

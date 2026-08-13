@@ -17,10 +17,10 @@ import (
 func main() {
 	ctx := context.Background()
 	dsn := strings.TrimSpace(os.Getenv("MYSQL_DSN"))
-	email := strings.ToLower(strings.TrimSpace(os.Getenv("SEED_ADMIN_EMAIL")))
-	password := os.Getenv("SEED_ADMIN_PASSWORD")
+	email := strings.ToLower(strings.TrimSpace(firstEnvironmentValue("SEED_SUPERADMIN_EMAIL", "SEED_ADMIN_EMAIL")))
+	password := firstEnvironmentValue("SEED_SUPERADMIN_PASSWORD", "SEED_ADMIN_PASSWORD")
 	if dsn == "" || email == "" || len(password) < 12 {
-		slog.Error("seed requires MYSQL_DSN, SEED_ADMIN_EMAIL, and SEED_ADMIN_PASSWORD with at least 12 characters")
+		slog.Error("seed requires MYSQL_DSN, SEED_SUPERADMIN_EMAIL, and SEED_SUPERADMIN_PASSWORD with at least 12 characters")
 		os.Exit(1)
 	}
 	db, err := database.Open(ctx, dsn)
@@ -34,7 +34,7 @@ func main() {
 	if err := seed(ctx, db, email, password); err != nil {
 		fail("seed database", err)
 	}
-	slog.Info("seed complete", "organization", "BG-GOLD", "adminEmail", email)
+	slog.Info("seed complete", "organization", "BG-GOLD", "superadminEmail", email)
 }
 
 func seed(ctx context.Context, db *sql.DB, email, password string) error {
@@ -63,13 +63,13 @@ func seed(ctx context.Context, db *sql.DB, email, password string) error {
 	if err = tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id) FROM organizations WHERE code='BG-GOLD'`).Scan(&orgID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO users(id,email,password_hash,full_name) VALUES(UUID_TO_BIN(?),?,?,'Administrator BG GOLD') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash),full_name=VALUES(full_name),status='ACTIVE'`, userID, email, string(hash)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO users(id,email,password_hash,full_name) VALUES(UUID_TO_BIN(?),?,?,'Superadmin BG GOLD') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash),full_name=VALUES(full_name),status='ACTIVE'`, userID, email, string(hash)); err != nil {
 		return err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id) FROM users WHERE email=?`, email).Scan(&userID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO organization_memberships(id,organization_id,user_id,employee_number,job_title) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),'BG-0001','System Administrator') ON DUPLICATE KEY UPDATE job_title=VALUES(job_title),status='ACTIVE'`, membershipID, orgID, userID); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO organization_memberships(id,organization_id,user_id,employee_number,job_title) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),'BG-SA-001','Super Administrator') ON DUPLICATE KEY UPDATE job_title=VALUES(job_title),status='ACTIVE'`, membershipID, orgID, userID); err != nil {
 		return err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id) FROM organization_memberships WHERE organization_id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?)`, orgID, userID).Scan(&membershipID); err != nil {
@@ -78,9 +78,9 @@ func seed(ctx context.Context, db *sql.DB, email, password string) error {
 
 	rolePermissions := map[string][]string{
 		"OWNER":      {"*"},
-		"ADMIN":      {"organization.manage", "employee.read", "employee.manage", "section.read", "section.manage", "policy.read", "policy.manage", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "attendance.correct", "report.read", "audit.read", "leave.own", "leave.read", "leave.approve", "leave.manage", "claim.own", "claim.read", "claim.approve", "claim.manage", "announcement.read", "announcement.manage", "notification.own"},
-		"HR":         {"employee.read", "employee.manage", "section.read", "policy.read", "policy.manage", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "attendance.correct", "report.read", "audit.read", "leave.own", "leave.read", "leave.approve", "leave.manage", "claim.own", "claim.read", "claim.approve", "claim.manage", "announcement.read", "announcement.manage", "notification.own"},
-		"SUPERVISOR": {"employee.read", "section.read", "policy.read", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "report.read", "leave.own", "leave.read", "leave.approve", "claim.own", "claim.read", "claim.approve", "announcement.read", "announcement.manage", "notification.own"},
+		"ADMIN":      {"organization.manage", "employee.read", "employee.create", "employee.manage", "section.read", "section.manage", "policy.read", "policy.manage", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "attendance.correct", "report.read", "audit.read", "leave.own", "leave.read", "leave.approve", "leave.manage", "claim.own", "claim.read", "claim.approve", "claim.manage", "announcement.read", "announcement.manage", "notification.own"},
+		"HR":         {"employee.read", "employee.create", "employee.manage", "section.read", "policy.read", "policy.manage", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "attendance.correct", "report.read", "audit.read", "leave.own", "leave.read", "leave.approve", "leave.manage", "claim.own", "claim.read", "claim.approve", "claim.manage", "announcement.read", "announcement.manage", "notification.own"},
+		"SUPERVISOR": {"employee.read", "employee.create", "section.read", "policy.read", "shift.read", "shift.manage", "attendance.own", "attendance.read", "attendance.approve", "report.read", "leave.own", "leave.read", "leave.approve", "claim.own", "claim.read", "claim.approve", "announcement.read", "announcement.manage", "notification.own"},
 		"EMPLOYEE":   {"section.read", "policy.read", "shift.read", "attendance.own", "leave.own", "claim.own", "announcement.read", "notification.own"},
 	}
 	roleIDs := map[string]string{}
@@ -157,3 +157,12 @@ func seed(ctx context.Context, db *sql.DB, email, password string) error {
 
 func title(code string) string     { return strings.Title(strings.ToLower(code)) }
 func fail(stage string, err error) { fmt.Fprintln(os.Stderr, stage+":", err); os.Exit(1) }
+
+func firstEnvironmentValue(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}

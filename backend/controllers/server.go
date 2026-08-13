@@ -140,7 +140,7 @@ func (s *Server) routes() {
 			protected.Post("/me/face/enroll", require("attendance.own", s.enrollFace))
 			protected.Post("/me/face/verify", require("attendance.own", s.verifyFace))
 			protected.Get("/employees", require("employee.read", s.listEmployees))
-			protected.Post("/employees", require("employee.manage", s.createEmployee))
+			protected.Post("/employees", require("employee.create", s.createEmployee))
 			protected.Patch("/employees/{employeeID}", require("employee.manage", s.updateEmployee))
 			protected.Post("/employees/{employeeID}/activate", require("employee.manage", s.activateEmployee))
 			protected.Post("/employees/{employeeID}/deactivate", require("employee.manage", s.deactivateEmployee))

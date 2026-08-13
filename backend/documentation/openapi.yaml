@@ -629,7 +629,7 @@ paths:
       summary: List organization employees
       responses: { "200": { description: Employee list } }
     post:
-      summary: Create an employee and role memberships
+      summary: Create an account (supervisors may create employees; the Superadmin may also create supervisors)
       requestBody:
         required: true
         content:
@@ -637,6 +637,7 @@ paths:
             schema: { $ref: "#/components/schemas/CreateEmployee" }
       responses:
         "201": { description: Employee created }
+        "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
   /employees/{employeeId}/activate:
     post:
@@ -1101,11 +1102,12 @@ components:
         password:
           type: string
           minLength: 12
-          description: Optional legacy temporary password. Omit to send a one-time account invitation.
+          description: Initial account password. When omitted, the backend sends a one-time account invitation when email delivery is configured.
         roles:
           {
             type: array,
-            items: { enum: [OWNER, ADMIN, HR, SUPERVISOR, EMPLOYEE] },
+            items: { enum: [ADMIN, HR, SUPERVISOR, EMPLOYEE] },
+            description: Non-Superadmin callers may only assign EMPLOYEE. OWNER cannot be created through this endpoint.
           }
     CreateShift:
       type: object

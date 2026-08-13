@@ -35,16 +35,23 @@ backend/
 2. Atur domain admin pada `CORS_ALLOWED_ORIGINS` serta SMTP server.
 3. Validasi dengan `./scripts/check-env.sh` atau `./scripts/check-env.ps1`.
 4. Jalankan `./scripts/deploy.sh` di Linux atau `./scripts/deploy.ps1` di PowerShell.
-5. Isi akun awal satu kali dengan `docker compose --profile tools run --rm seed`.
+5. Isi akun Superadmin awal satu kali dengan `docker compose --profile tools run --rm seed`.
 6. Periksa `http://localhost:8080/health` atau domain API melalui reverse proxy.
 
 MySQL memakai port host `3307`, MinIO API `9000`, MinIO Console `9001`, Mailpit `8025`, dan Go API `8080` secara default. Semua dapat diganti melalui `.env`.
 
 MySQL dan MinIO secara default hanya bind ke `127.0.0.1`; API bind ke `0.0.0.0`. Gunakan Nginx/Caddy/Traefik untuk HTTPS dan jangan membuka port database atau MinIO ke internet.
 
+## Hierarki pendaftaran akun
+
+- `OWNER` ditampilkan sebagai **Superadmin** dan hanya dibuat oleh seeder dari `SEED_SUPERADMIN_EMAIL` serta `SEED_SUPERADMIN_PASSWORD`.
+- Superadmin dapat membuat akun `SUPERVISOR` atau `EMPLOYEE` beserta kata sandi awalnya.
+- Supervisor dapat membuat akun `EMPLOYEE`, tetapi API menolak pembuatan supervisor atau Superadmin.
+- Sistem menolak pembuatan akun `OWNER` kedua dari endpoint karyawan.
+
 ## Migrasi database
 
-Terdapat 15 migrasi SQL versioned di folder `migrations`. Migrasi aman dijalankan berulang karena versi yang sudah tercatat pada tabel `schema_migrations` akan dilewati.
+Terdapat 16 migrasi SQL versioned di folder `migrations`. Migrasi aman dijalankan berulang karena versi yang sudah tercatat pada tabel `schema_migrations` akan dilewati.
 
 - Otomatis: API menjalankan migrasi sebelum mulai menerima request.
 - Manual Docker: `docker compose --profile tools run --rm migrate`.

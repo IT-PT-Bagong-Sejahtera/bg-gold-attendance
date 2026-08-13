@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
+import { AccountRegistrationCard } from "../components/AccountRegistrationCard";
 import { api, type Me, type Organization } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { colors, spacing } from "../theme";
@@ -161,6 +162,9 @@ export function ProfileScreen() {
                 </View>
               </View>
             ) : null}
+            {me.roles.some((role) => role === "SUPERVISOR" || role === "OWNER") ? (
+              <AccountRegistrationCard token={token} roles={me.roles} />
+            ) : null}
           </>
         ) : null}
         <View style={styles.security}>
@@ -237,7 +241,7 @@ function roleLabel(role: string) {
     SUPERVISOR: "Supervisor",
     ADMIN: "Administrator",
     HR: "HR",
-    OWNER: "Pemilik",
+    OWNER: "Superadmin",
   };
   return labels[role] ?? role;
 }

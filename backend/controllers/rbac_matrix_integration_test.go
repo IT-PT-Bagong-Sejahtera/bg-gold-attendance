@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +93,7 @@ func TestRoleEndpointAuthorizationMatrix(t *testing.T) {
 		{http.MethodGet, "/sections", all},
 		{http.MethodGet, "/policies", all},
 		{http.MethodGet, "/employees", managers},
-		{http.MethodPost, "/employees", adminHR},
+		{http.MethodPost, "/employees", managers},
 		{http.MethodPost, "/sections", adminOnly},
 		{http.MethodPost, "/policies", adminHR},
 		{http.MethodPost, "/shifts", managers},
@@ -132,5 +133,56 @@ func TestRoleEndpointAuthorizationMatrix(t *testing.T) {
 				}
 			})
 		}
+	}
+
+	createAccount := func(actorToken, role, suffix string) (int, []byte, string, string) {
+		email := strings.ToLower(role) + "-created-" + stamp + suffix + "@bggold.test"
+		status, body := authorizedJSON(t, http.MethodPost, host.URL+"/api/v1/employees", actorToken, map[string]any{
+			"email": email, "fullName": role + " Created", "employeeNumber": "CREATED-" + role + "-" + stamp + suffix,
+			"jobTitle": role + " Test", "password": "Created-Account-2026!", "roles": []string{role},
+		})
+		if status != http.StatusCreated {
+			return status, body, email, ""
+		}
+		var envelope struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		var createdUserID string
+		if err := db.QueryRow(`SELECT BIN_TO_UUID(user_id) FROM organization_memberships WHERE id=UUID_TO_BIN(?)`, envelope.Data.ID).Scan(&createdUserID); err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, identityRecord{createdUserID, envelope.Data.ID})
+		return status, body, email, envelope.Data.ID
+	}
+
+	status, body, supervisorEmail, _ := createAccount(tokens["OWNER"], "SUPERVISOR", "-owner")
+	if status != http.StatusCreated {
+		t.Fatalf("superadmin could not create supervisor: %d %s", status, body)
+	}
+	supervisorCreatedToken := login(t, host.URL, supervisorEmail, "Created-Account-2026!")
+	status, body, employeeEmail, _ := createAccount(supervisorCreatedToken, "EMPLOYEE", "-supervisor")
+	if status != http.StatusCreated {
+		t.Fatalf("supervisor could not create employee: %d %s", status, body)
+	}
+	_ = login(t, host.URL, employeeEmail, "Created-Account-2026!")
+
+	status, body = authorizedJSON(t, http.MethodPost, host.URL+"/api/v1/employees", supervisorCreatedToken, map[string]any{
+		"email": "forbidden-supervisor-" + stamp + "@bggold.test", "fullName": "Forbidden Supervisor", "employeeNumber": "FORBIDDEN-SUP-" + stamp,
+		"password": "Created-Account-2026!", "roles": []string{"SUPERVISOR"},
+	})
+	if status != http.StatusForbidden || !strings.Contains(string(body), "ROLE_ASSIGNMENT_FORBIDDEN") {
+		t.Fatalf("supervisor role escalation was not blocked: %d %s", status, body)
+	}
+	status, body = authorizedJSON(t, http.MethodPost, host.URL+"/api/v1/employees", tokens["OWNER"], map[string]any{
+		"email": "forbidden-owner-" + stamp + "@bggold.test", "fullName": "Forbidden Owner", "employeeNumber": "FORBIDDEN-OWNER-" + stamp,
+		"password": "Created-Account-2026!", "roles": []string{"OWNER"},
+	})
+	if status != http.StatusForbidden || !strings.Contains(string(body), "ROLE_ASSIGNMENT_FORBIDDEN") {
+		t.Fatalf("second superadmin creation was not blocked: %d %s", status, body)
 	}
 }
