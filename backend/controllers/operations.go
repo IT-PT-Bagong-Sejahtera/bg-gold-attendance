@@ -1,0 +1,1175 @@
+package controllers
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/bg-gold/attendance-api/common"
+	"github.com/bg-gold/attendance-api/helpers"
+	"github.com/bg-gold/attendance-api/services/auth"
+	"github.com/go-chi/chi/v5"
+	"golang.org/x/crypto/bcrypt"
+)
+
+type employeeItem struct {
+	ID             string   `json:"id"`
+	FullName       string   `json:"fullName"`
+	Email          string   `json:"email"`
+	EmployeeNumber string   `json:"employeeNumber"`
+	JobTitle       *string  `json:"jobTitle"`
+	Status         string   `json:"status"`
+	Roles          []string `json:"roles"`
+}
+
+type sectionItem struct {
+	ID        string   `json:"id"`
+	Code      string   `json:"code"`
+	Name      string   `json:"name"`
+	Address   *string  `json:"address"`
+	Timezone  *string  `json:"timezone"`
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	Status    string   `json:"status"`
+}
+
+type shiftItem struct {
+	ID       string    `json:"id"`
+	Title    string    `json:"title"`
+	RoleName *string   `json:"roleName"`
+	StartsAt time.Time `json:"startsAt"`
+	EndsAt   time.Time `json:"endsAt"`
+	Status   string    `json:"status"`
+	Section  struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"section"`
+	Participants []shiftParticipant `json:"participants"`
+}
+
+type shiftParticipant struct {
+	MembershipID   string `json:"membershipId"`
+	EmployeeName   string `json:"employeeName"`
+	EmployeeNumber string `json:"employeeNumber"`
+}
+
+type policyItem struct {
+	ID                               string   `json:"id"`
+	Name                             string   `json:"name"`
+	Version                          int      `json:"version"`
+	Modes                            []string `json:"modes"`
+	SelfieRequired                   bool     `json:"selfieRequired"`
+	MinimumLocationAccuracyMeters    *float64 `json:"minimumLocationAccuracyMeters,omitempty"`
+	EarlyClockInMinutes              uint16   `json:"earlyClockInMinutes"`
+	LateClockInMinutes               uint16   `json:"lateClockInMinutes"`
+	EarlyClockOutMinutes             uint16   `json:"earlyClockOutMinutes"`
+	LateClockOutMinutes              uint16   `json:"lateClockOutMinutes"`
+	PreventEarlyClockIn              bool     `json:"preventEarlyClockIn"`
+	PreventLateClockIn               bool     `json:"preventLateClockIn"`
+	PreventEarlyClockOut             bool     `json:"preventEarlyClockOut"`
+	PreventLateClockOut              bool     `json:"preventLateClockOut"`
+	WorkMoreRequiresApproval         bool     `json:"workMoreRequiresApproval"`
+	UnscheduledBreakRequiresApproval bool     `json:"unscheduledBreakRequiresApproval"`
+	PreventUnscheduledBreak          bool     `json:"preventUnscheduledBreak"`
+	ScheduledBreakStartOffsetMinutes *uint16  `json:"scheduledBreakStartOffsetMinutes,omitempty"`
+	ScheduledBreakEndOffsetMinutes   *uint16  `json:"scheduledBreakEndOffsetMinutes,omitempty"`
+	BreakRoundingMinutes             *uint16  `json:"breakRoundingMinutes,omitempty"`
+	Status                           string   `json:"status"`
+}
+
+func (s *Server) listEmployees(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT BIN_TO_UUID(m.id), u.full_name, u.email, m.employee_number, m.job_title, m.status
+		FROM organization_memberships m JOIN users u ON u.id=m.user_id
+		WHERE m.organization_id=UUID_TO_BIN(?) ORDER BY u.full_name`, p.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := []employeeItem{}
+	for rows.Next() {
+		var v employeeItem
+		var title sql.NullString
+		if err := rows.Scan(&v.ID, &v.FullName, &v.Email, &v.EmployeeNumber, &title, &v.Status); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if title.Valid {
+			v.JobTitle = &title.String
+		}
+		v.Roles = []string{}
+		roleRows, err := s.db.QueryContext(r.Context(), `SELECT ro.code FROM membership_roles mr JOIN roles ro ON ro.id=mr.role_id WHERE mr.membership_id=UUID_TO_BIN(?) ORDER BY ro.code`, v.ID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		for roleRows.Next() {
+			var code string
+			if err := roleRows.Scan(&code); err != nil {
+				roleRows.Close()
+				httpx.WriteError(w, r, err)
+				return
+			}
+			v.Roles = append(v.Roles, code)
+		}
+		roleRows.Close()
+		items = append(items, v)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": items, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	var in struct {
+		Email, FullName, EmployeeNumber, JobTitle, Password string
+		Roles                                               []string `json:"roles"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	in.FullName = strings.TrimSpace(in.FullName)
+	in.EmployeeNumber = strings.TrimSpace(in.EmployeeNumber)
+	if in.Email == "" || in.FullName == "" || in.EmployeeNumber == "" || (in.Password != "" && len(in.Password) < 12) {
+		writeValidation(w, r, "Email, nama, dan nomor karyawan wajib diisi. Kata sandi sementara, bila digunakan, minimal 12 karakter.")
+		return
+	}
+	if len(in.Roles) == 0 {
+		in.Roles = []string{"EMPLOYEE"}
+	}
+	userID, _ := identity.NewUUID()
+	membershipID, _ := identity.NewUUID()
+	credential := in.Password
+	if credential == "" {
+		credential = userID + membershipID
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(credential), bcrypt.DefaultCost)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	var existingUserID string
+	newUser := false
+	err = tx.QueryRowContext(r.Context(), `SELECT BIN_TO_UUID(id) FROM users WHERE email=?`, in.Email).Scan(&existingUserID)
+	if err == nil {
+		userID = existingUserID
+	} else if errors.Is(err, sql.ErrNoRows) {
+		newUser = true
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO users(id,email,password_hash,full_name) VALUES(UUID_TO_BIN(?),?,?,?)`, userID, in.Email, string(hash), in.FullName); err != nil {
+			writeConflict(w, r, "EMPLOYEE_ALREADY_EXISTS", "Email sudah digunakan.", err)
+			return
+		}
+	} else {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	membershipStatus := "ACTIVE"
+	if newUser && in.Password == "" {
+		membershipStatus = "INVITED"
+	}
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO organization_memberships(id,organization_id,user_id,employee_number,job_title,status) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,NULLIF(?,''),?)`, membershipID, p.OrganizationID, userID, in.EmployeeNumber, in.JobTitle, membershipStatus); err != nil {
+		writeConflict(w, r, "EMPLOYEE_NUMBER_EXISTS", "Nomor karyawan sudah digunakan.", err)
+		return
+	}
+	for _, code := range in.Roles {
+		result, execErr := tx.ExecContext(r.Context(), `INSERT INTO membership_roles(membership_id,role_id) SELECT UUID_TO_BIN(?),id FROM roles WHERE code=? AND (organization_id=UUID_TO_BIN(?) OR organization_id IS NULL) LIMIT 1`, membershipID, strings.ToUpper(code), p.OrganizationID)
+		if execErr != nil {
+			httpx.WriteError(w, r, execErr)
+			return
+		}
+		count, _ := result.RowsAffected()
+		if count == 0 {
+			writeValidation(w, r, "Peran tidak dikenal: "+code)
+			return
+		}
+	}
+	if err = insertAudit(r.Context(), tx, p, "employee.create", "organization_membership", membershipID, map[string]any{"email": in.Email}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	data := map[string]any{"id": membershipID, "invitationStatus": "NOT_REQUIRED"}
+	if newUser && in.Password == "" {
+		data["invitationStatus"] = "NOT_CONFIGURED"
+		token, resetErr := s.authService.RequestPasswordReset(r.Context(), in.Email)
+		if resetErr != nil {
+			data["invitationStatus"] = "FAILED"
+			slog.Error("employee invitation token failed", "request_id", httpx.RequestID(r.Context()), "error", resetErr)
+		} else if token != "" {
+			if s.environment == "development" || s.environment == "test" {
+				data["developmentInviteToken"] = token
+			}
+			if s.resetSender != nil {
+				if sendErr := s.resetSender.SendInvitation(r.Context(), in.Email, token); sendErr != nil {
+					data["invitationStatus"] = "FAILED"
+					slog.Error("employee invitation delivery failed", "request_id", httpx.RequestID(r.Context()), "error", sendErr)
+				} else {
+					data["invitationStatus"] = "SENT"
+				}
+			}
+		}
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"data": data, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) activateEmployee(w http.ResponseWriter, r *http.Request) {
+	s.changeEmployeeStatus(w, r, "ACTIVE")
+}
+
+func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	employeeID := strings.TrimSpace(chi.URLParam(r, "employeeID"))
+	var in struct {
+		FullName       string   `json:"fullName"`
+		EmployeeNumber string   `json:"employeeNumber"`
+		JobTitle       string   `json:"jobTitle"`
+		Roles          []string `json:"roles"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.FullName = strings.TrimSpace(in.FullName)
+	in.EmployeeNumber = strings.TrimSpace(in.EmployeeNumber)
+	in.JobTitle = strings.TrimSpace(in.JobTitle)
+	if in.FullName == "" || in.EmployeeNumber == "" || len(in.Roles) == 0 {
+		writeValidation(w, r, "Nama, nomor karyawan, dan sedikitnya satu peran wajib diisi.")
+		return
+	}
+	roleCodes := make([]string, 0, len(in.Roles))
+	seen := map[string]bool{}
+	for _, raw := range in.Roles {
+		code := strings.ToUpper(strings.TrimSpace(raw))
+		if code != "" && !seen[code] {
+			seen[code] = true
+			roleCodes = append(roleCodes, code)
+		}
+	}
+	if len(roleCodes) == 0 {
+		writeValidation(w, r, "Sedikitnya satu peran wajib dipilih.")
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	var userID string
+	err = tx.QueryRowContext(r.Context(), `SELECT BIN_TO_UUID(user_id) FROM organization_memberships WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, employeeID, p.OrganizationID).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "EMPLOYEE_NOT_FOUND", Message: "Karyawan tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if employeeID == p.MembershipID {
+		var owns bool
+		if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM membership_roles mr JOIN roles ro ON ro.id=mr.role_id WHERE mr.membership_id=UUID_TO_BIN(?) AND ro.code='OWNER')`, employeeID).Scan(&owns); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if owns && !seen["OWNER"] {
+			httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SELF_OWNER_ROLE_REMOVAL_FORBIDDEN", Message: "Anda tidak dapat menghapus peran Owner dari akun sendiri."})
+			return
+		}
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE users SET full_name=? WHERE id=UUID_TO_BIN(?)`, in.FullName, userID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE organization_memberships SET employee_number=?,job_title=NULLIF(?,''),updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?)`, in.EmployeeNumber, in.JobTitle, employeeID); err != nil {
+		writeConflict(w, r, "EMPLOYEE_NUMBER_EXISTS", "Nomor karyawan sudah digunakan.", err)
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM membership_roles WHERE membership_id=UUID_TO_BIN(?)`, employeeID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	for _, code := range roleCodes {
+		result, execErr := tx.ExecContext(r.Context(), `INSERT INTO membership_roles(membership_id,role_id) SELECT UUID_TO_BIN(?),id FROM roles WHERE code=? AND (organization_id=UUID_TO_BIN(?) OR organization_id IS NULL) LIMIT 1`, employeeID, code, p.OrganizationID)
+		if execErr != nil {
+			httpx.WriteError(w, r, execErr)
+			return
+		}
+		count, _ := result.RowsAffected()
+		if count == 0 {
+			writeValidation(w, r, "Peran tidak dikenal: "+code)
+			return
+		}
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE refresh_sessions SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP(6)) WHERE user_id=UUID_TO_BIN(?) AND active_organization_id=UUID_TO_BIN(?)`, userID, p.OrganizationID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = insertAudit(r.Context(), tx, p, "employee.update", "organization_membership", employeeID, map[string]any{"roles": roleCodes}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": employeeID, "fullName": in.FullName, "employeeNumber": in.EmployeeNumber, "jobTitle": in.JobTitle, "roles": roleCodes}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) deactivateEmployee(w http.ResponseWriter, r *http.Request) {
+	s.changeEmployeeStatus(w, r, "INACTIVE")
+}
+
+func (s *Server) changeEmployeeStatus(w http.ResponseWriter, r *http.Request, nextStatus string) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	employeeID := strings.TrimSpace(chi.URLParam(r, "employeeID"))
+	if employeeID == p.MembershipID && nextStatus == "INACTIVE" {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SELF_DEACTIVATION_FORBIDDEN", Message: "Anda tidak dapat menonaktifkan keanggotaan sendiri."})
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	var userID, currentStatus string
+	err = tx.QueryRowContext(r.Context(), `SELECT BIN_TO_UUID(user_id),status FROM organization_memberships WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, employeeID, p.OrganizationID).Scan(&userID, &currentStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "EMPLOYEE_NOT_FOUND", Message: "Karyawan tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if currentStatus != nextStatus {
+		if nextStatus == "ACTIVE" {
+			_, err = tx.ExecContext(r.Context(), `UPDATE organization_memberships SET status='ACTIVE',ended_at=NULL WHERE id=UUID_TO_BIN(?)`, employeeID)
+		} else {
+			_, err = tx.ExecContext(r.Context(), `UPDATE organization_memberships SET status='INACTIVE',ended_at=UTC_DATE() WHERE id=UUID_TO_BIN(?)`, employeeID)
+			if err == nil {
+				_, err = tx.ExecContext(r.Context(), `UPDATE refresh_sessions SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP(6)) WHERE user_id=UUID_TO_BIN(?) AND active_organization_id=UUID_TO_BIN(?)`, userID, p.OrganizationID)
+			}
+		}
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	action := "employee.activate"
+	if nextStatus == "INACTIVE" {
+		action = "employee.deactivate"
+	}
+	if err = insertAudit(r.Context(), tx, p, action, "organization_membership", employeeID, map[string]any{"previousStatus": currentStatus, "status": nextStatus}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]string{"id": employeeID, "status": nextStatus}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) listSections(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	rows, err := s.db.QueryContext(r.Context(), `SELECT BIN_TO_UUID(id),code,name,address,timezone,latitude,longitude,status FROM sections WHERE organization_id=UUID_TO_BIN(?) ORDER BY name`, p.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := []sectionItem{}
+	for rows.Next() {
+		var v sectionItem
+		var address, timezone sql.NullString
+		var lat, lon sql.NullFloat64
+		if err := rows.Scan(&v.ID, &v.Code, &v.Name, &address, &timezone, &lat, &lon, &v.Status); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if address.Valid {
+			v.Address = &address.String
+		}
+		if timezone.Valid {
+			v.Timezone = &timezone.String
+		}
+		if lat.Valid {
+			v.Latitude = &lat.Float64
+		}
+		if lon.Valid {
+			v.Longitude = &lon.Float64
+		}
+		items = append(items, v)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": items, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) createSection(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	var in struct {
+		Code      string   `json:"code"`
+		Name      string   `json:"name"`
+		Address   string   `json:"address"`
+		Timezone  string   `json:"timezone"`
+		Latitude  *float64 `json:"latitude"`
+		Longitude *float64 `json:"longitude"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.Code = strings.ToUpper(strings.TrimSpace(in.Code))
+	in.Name = strings.TrimSpace(in.Name)
+	in.Timezone = strings.TrimSpace(in.Timezone)
+	if in.Code == "" || in.Name == "" {
+		writeValidation(w, r, "Kode dan nama lokasi wajib diisi.")
+		return
+	}
+	if (in.Latitude == nil) != (in.Longitude == nil) {
+		writeValidation(w, r, "Latitude dan longitude harus diisi bersama.")
+		return
+	}
+	if in.Timezone != "" {
+		if _, err := time.LoadLocation(in.Timezone); err != nil {
+			writeValidation(w, r, "Timezone lokasi tidak valid.")
+			return
+		}
+	}
+	if in.Latitude != nil && (*in.Latitude < -90 || *in.Latitude > 90 || *in.Longitude < -180 || *in.Longitude > 180) {
+		writeValidation(w, r, "Koordinat lokasi tidak valid.")
+		return
+	}
+	id, _ := identity.NewUUID()
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO sections(id,organization_id,code,name,address,timezone,latitude,longitude) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,NULLIF(?,''),NULLIF(?,''),?,?)`, id, p.OrganizationID, in.Code, in.Name, in.Address, in.Timezone, in.Latitude, in.Longitude)
+	if err != nil {
+		writeConflict(w, r, "SECTION_CODE_EXISTS", "Kode lokasi sudah digunakan.", err)
+		return
+	}
+	if err = insertAudit(r.Context(), tx, p, "section.create", "section", id, map[string]any{"code": in.Code}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"data": map[string]string{"id": id}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) updateSection(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	sectionID := strings.TrimSpace(chi.URLParam(r, "sectionID"))
+	var in struct {
+		Code      string   `json:"code"`
+		Name      string   `json:"name"`
+		Address   string   `json:"address"`
+		Timezone  string   `json:"timezone"`
+		Latitude  *float64 `json:"latitude"`
+		Longitude *float64 `json:"longitude"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.Code = strings.ToUpper(strings.TrimSpace(in.Code))
+	in.Name = strings.TrimSpace(in.Name)
+	in.Address = strings.TrimSpace(in.Address)
+	in.Timezone = strings.TrimSpace(in.Timezone)
+	if in.Code == "" || in.Name == "" || (in.Latitude == nil) != (in.Longitude == nil) {
+		writeValidation(w, r, "Kode, nama, dan pasangan koordinat lokasi wajib valid.")
+		return
+	}
+	if in.Timezone != "" {
+		if _, err := time.LoadLocation(in.Timezone); err != nil {
+			writeValidation(w, r, "Timezone lokasi tidak valid.")
+			return
+		}
+	}
+	if in.Latitude != nil && (*in.Latitude < -90 || *in.Latitude > 90 || *in.Longitude < -180 || *in.Longitude > 180) {
+		writeValidation(w, r, "Koordinat lokasi tidak valid.")
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `UPDATE sections SET code=?,name=?,address=NULLIF(?,''),timezone=NULLIF(?,''),latitude=?,longitude=?,updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?)`, in.Code, in.Name, in.Address, in.Timezone, in.Latitude, in.Longitude, sectionID, p.OrganizationID)
+	if err != nil {
+		writeConflict(w, r, "SECTION_CODE_EXISTS", "Kode lokasi sudah digunakan.", err)
+		return
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "SECTION_NOT_FOUND", Message: "Lokasi kerja tidak ditemukan."})
+		return
+	}
+	if err = insertAudit(r.Context(), tx, p, "section.update", "section", sectionID, map[string]any{"code": in.Code}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": sectionID, "code": in.Code, "name": in.Name, "address": in.Address, "timezone": in.Timezone, "latitude": in.Latitude, "longitude": in.Longitude}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) activateSection(w http.ResponseWriter, r *http.Request) {
+	s.changeSectionStatus(w, r, "ACTIVE")
+}
+
+func (s *Server) deactivateSection(w http.ResponseWriter, r *http.Request) {
+	s.changeSectionStatus(w, r, "INACTIVE")
+}
+
+func (s *Server) changeSectionStatus(w http.ResponseWriter, r *http.Request, nextStatus string) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	sectionID := strings.TrimSpace(chi.URLParam(r, "sectionID"))
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `UPDATE sections SET status=?,updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?)`, nextStatus, sectionID, p.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "SECTION_NOT_FOUND", Message: "Lokasi kerja tidak ditemukan."})
+		return
+	}
+	action := "section.activate"
+	if nextStatus == "INACTIVE" {
+		action = "section.deactivate"
+	}
+	if err = insertAudit(r.Context(), tx, p, action, "section", sectionID, nil); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]string{"id": sectionID, "status": nextStatus}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) listPolicies(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	items, err := s.queryPolicies(r, p.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": items, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) queryPolicies(r *http.Request, orgID string) ([]policyItem, error) {
+	rows, err := s.db.QueryContext(r.Context(), `SELECT BIN_TO_UUID(id),name,version,selfie_required,minimum_location_accuracy_meters,early_clock_in_minutes,late_clock_in_minutes,early_clock_out_minutes,late_clock_out_minutes,prevent_early_clock_in,prevent_late_clock_in,prevent_early_clock_out,prevent_late_clock_out,work_more_requires_approval,unscheduled_break_requires_approval,prevent_unscheduled_break,scheduled_break_start_offset_minutes,scheduled_break_end_offset_minutes,break_rounding_minutes,status FROM attendance_policies WHERE organization_id=UUID_TO_BIN(?) ORDER BY name,version DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []policyItem{}
+	for rows.Next() {
+		var v policyItem
+		var accuracy sql.NullFloat64
+		var breakStart, breakEnd, rounding sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.Name, &v.Version, &v.SelfieRequired, &accuracy, &v.EarlyClockInMinutes, &v.LateClockInMinutes, &v.EarlyClockOutMinutes, &v.LateClockOutMinutes, &v.PreventEarlyClockIn, &v.PreventLateClockIn, &v.PreventEarlyClockOut, &v.PreventLateClockOut, &v.WorkMoreRequiresApproval, &v.UnscheduledBreakRequiresApproval, &v.PreventUnscheduledBreak, &breakStart, &breakEnd, &rounding, &v.Status); err != nil {
+			return nil, err
+		}
+		if accuracy.Valid {
+			v.MinimumLocationAccuracyMeters = &accuracy.Float64
+		}
+		if breakStart.Valid {
+			value := uint16(breakStart.Int64)
+			v.ScheduledBreakStartOffsetMinutes = &value
+		}
+		if breakEnd.Valid {
+			value := uint16(breakEnd.Int64)
+			v.ScheduledBreakEndOffsetMinutes = &value
+		}
+		if rounding.Valid {
+			value := uint16(rounding.Int64)
+			v.BreakRoundingMinutes = &value
+		}
+		v.Modes = []string{}
+		modeRows, err := s.db.QueryContext(r.Context(), `SELECT mode FROM attendance_policy_modes WHERE policy_id=UUID_TO_BIN(?) ORDER BY mode`, v.ID)
+		if err != nil {
+			return nil, err
+		}
+		for modeRows.Next() {
+			var mode string
+			if err := modeRows.Scan(&mode); err != nil {
+				modeRows.Close()
+				return nil, err
+			}
+			v.Modes = append(v.Modes, mode)
+		}
+		modeRows.Close()
+		items = append(items, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, rows.Err()
+}
+
+func (s *Server) queryShiftParticipants(r *http.Request, organizationID, shiftID string) ([]shiftParticipant, error) {
+	rows, err := s.db.QueryContext(r.Context(), `SELECT BIN_TO_UUID(m.id),u.full_name,m.employee_number FROM shift_assignments sa JOIN organization_memberships m ON m.id=sa.membership_id JOIN users u ON u.id=m.user_id WHERE sa.shift_id=UUID_TO_BIN(?) AND m.organization_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' ORDER BY u.full_name`, shiftID, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []shiftParticipant{}
+	for rows.Next() {
+		var item shiftParticipant
+		if err := rows.Scan(&item.MembershipID, &item.EmployeeName, &item.EmployeeNumber); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	var in struct {
+		Name                          string   `json:"name"`
+		Modes                         []string `json:"modes"`
+		SelfieRequired                bool     `json:"selfieRequired"`
+		MinimumLocationAccuracyMeters *float64 `json:"minimumLocationAccuracyMeters"`
+		GeofenceRadiusMeters          *float64 `json:"geofenceRadiusMeters"`
+		WiFiNetworks                  []struct {
+			SSID  string `json:"ssid"`
+			BSSID string `json:"bssid"`
+		} `json:"wifiNetworks"`
+		FaceFailClosed                   *bool   `json:"faceFailClosed"`
+		IntegrityFailClosed              *bool   `json:"integrityFailClosed"`
+		MaxRiskScore                     *int    `json:"maxRiskScore"`
+		EarlyClockInMinutes              uint16  `json:"earlyClockInMinutes"`
+		LateClockInMinutes               uint16  `json:"lateClockInMinutes"`
+		EarlyClockOutMinutes             uint16  `json:"earlyClockOutMinutes"`
+		LateClockOutMinutes              uint16  `json:"lateClockOutMinutes"`
+		PreventEarlyClockIn              bool    `json:"preventEarlyClockIn"`
+		PreventLateClockIn               bool    `json:"preventLateClockIn"`
+		PreventEarlyClockOut             bool    `json:"preventEarlyClockOut"`
+		PreventLateClockOut              bool    `json:"preventLateClockOut"`
+		UnscheduledRequiresApproval      bool    `json:"unscheduledRequiresApproval"`
+		WorkMoreRequiresApproval         bool    `json:"workMoreRequiresApproval"`
+		UnscheduledBreakRequiresApproval bool    `json:"unscheduledBreakRequiresApproval"`
+		PreventUnscheduledBreak          bool    `json:"preventUnscheduledBreak"`
+		ScheduledBreakStartOffsetMinutes *uint16 `json:"scheduledBreakStartOffsetMinutes"`
+		ScheduledBreakEndOffsetMinutes   *uint16 `json:"scheduledBreakEndOffsetMinutes"`
+		BreakRoundingMinutes             *uint16 `json:"breakRoundingMinutes"`
+		SectionID                        string  `json:"sectionId"`
+		MembershipID                     string  `json:"membershipId"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	in.SectionID = strings.TrimSpace(in.SectionID)
+	in.MembershipID = strings.TrimSpace(in.MembershipID)
+	if in.Name == "" {
+		writeValidation(w, r, "Nama kebijakan wajib diisi.")
+		return
+	}
+	if in.SectionID != "" && in.MembershipID != "" {
+		writeValidation(w, r, "Kebijakan hanya dapat ditujukan ke satu lokasi atau satu karyawan.")
+		return
+	}
+	if (in.ScheduledBreakStartOffsetMinutes == nil) != (in.ScheduledBreakEndOffsetMinutes == nil) || (in.ScheduledBreakStartOffsetMinutes != nil && *in.ScheduledBreakEndOffsetMinutes <= *in.ScheduledBreakStartOffsetMinutes) {
+		writeValidation(w, r, "Rentang scheduled break tidak valid.")
+		return
+	}
+	if in.PreventUnscheduledBreak && in.ScheduledBreakStartOffsetMinutes == nil {
+		writeValidation(w, r, "Jadwal istirahat wajib diisi sebelum absensi di luar jadwal dapat ditolak.")
+		return
+	}
+	if in.PreventUnscheduledBreak && in.UnscheduledBreakRequiresApproval {
+		writeValidation(w, r, "Pilih salah satu: tolak atau minta persetujuan untuk istirahat di luar jadwal.")
+		return
+	}
+	if in.EarlyClockInMinutes > 1440 || in.LateClockInMinutes > 1440 || in.EarlyClockOutMinutes > 1440 || in.LateClockOutMinutes > 1440 {
+		writeValidation(w, r, "Toleransi waktu absensi maksimal 1.440 menit.")
+		return
+	}
+	if len(in.Modes) == 0 {
+		in.Modes = []string{"ANYWHERE"}
+	}
+	containsGeofence := false
+	containsWiFi := false
+	containsIntegrity := false
+	for _, mode := range in.Modes {
+		containsGeofence = containsGeofence || strings.EqualFold(mode, "GEOFENCE")
+		containsWiFi = containsWiFi || strings.EqualFold(mode, "WIFI")
+		containsIntegrity = containsIntegrity || strings.EqualFold(mode, "DEVICE_INTEGRITY")
+	}
+	if containsWiFi {
+		if len(in.WiFiNetworks) == 0 {
+			writeValidation(w, r, "Minimal satu SSID dan BSSID Wi-Fi wajib diisi.")
+			return
+		}
+		for _, network := range in.WiFiNetworks {
+			if strings.TrimSpace(network.SSID) == "" || normalizeWiFiBSSID(network.BSSID) == "" {
+				writeValidation(w, r, "SSID dan BSSID Wi-Fi wajib valid.")
+				return
+			}
+		}
+	}
+	if containsGeofence && (in.GeofenceRadiusMeters == nil || *in.GeofenceRadiusMeters < 10 || *in.GeofenceRadiusMeters > 5000) {
+		writeValidation(w, r, "Radius geofence wajib antara 10 dan 5.000 meter.")
+		return
+	}
+	if containsIntegrity && in.MaxRiskScore != nil && (*in.MaxRiskScore < 0 || *in.MaxRiskScore > 100) {
+		writeValidation(w, r, "Skor risiko maksimum wajib antara 0 dan 100.")
+		return
+	}
+	allowed := map[string]bool{"ANYWHERE": true, "LOCATION_ONLY": true, "GEOFENCE": true, "DYNAMIC_QR": true, "WIFI": true, "SELFIE": true, "FACE_VERIFICATION": true, "DEVICE_INTEGRITY": true}
+	id, _ := identity.NewUUID()
+	assignmentID, _ := identity.NewUUID()
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	if in.SectionID != "" {
+		var count int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM sections WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='ACTIVE'`, in.SectionID, p.OrganizationID).Scan(&count); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if count == 0 {
+			writeValidation(w, r, "Lokasi target tidak ditemukan pada organisasi ini.")
+			return
+		}
+	}
+	if in.MembershipID != "" {
+		var count int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM organization_memberships WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='ACTIVE'`, in.MembershipID, p.OrganizationID).Scan(&count); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if count == 0 {
+			writeValidation(w, r, "Karyawan target tidak ditemukan pada organisasi ini.")
+			return
+		}
+	}
+	now := time.Now().UTC()
+	archiveQuery := `UPDATE attendance_policies ap JOIN policy_assignments pa ON pa.policy_id=ap.id SET ap.status='ARCHIVED',pa.valid_until=? WHERE pa.organization_id=UUID_TO_BIN(?) AND (pa.valid_until IS NULL OR pa.valid_until>?)`
+	archiveArgs := []any{now, p.OrganizationID, now}
+	if in.MembershipID != "" {
+		archiveQuery += ` AND pa.membership_id=UUID_TO_BIN(?)`
+		archiveArgs = append(archiveArgs, in.MembershipID)
+	} else if in.SectionID != "" {
+		archiveQuery += ` AND pa.section_id=UUID_TO_BIN(?) AND pa.membership_id IS NULL`
+		archiveArgs = append(archiveArgs, in.SectionID)
+	} else {
+		archiveQuery += ` AND pa.section_id IS NULL AND pa.membership_id IS NULL`
+	}
+	if _, err = tx.ExecContext(r.Context(), archiveQuery, archiveArgs...); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO attendance_policies(
+		id,organization_id,name,early_clock_in_minutes,late_clock_in_minutes,early_clock_out_minutes,late_clock_out_minutes,
+		prevent_early_clock_in,prevent_late_clock_in,prevent_early_clock_out,prevent_late_clock_out,
+		selfie_required,minimum_location_accuracy_meters,unscheduled_requires_approval,work_more_requires_approval,
+		unscheduled_break_requires_approval,prevent_unscheduled_break,scheduled_break_start_offset_minutes,scheduled_break_end_offset_minutes,
+		break_rounding_minutes,status
+	) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE')`,
+		id, p.OrganizationID, in.Name, in.EarlyClockInMinutes, in.LateClockInMinutes, in.EarlyClockOutMinutes, in.LateClockOutMinutes,
+		in.PreventEarlyClockIn, in.PreventLateClockIn, in.PreventEarlyClockOut, in.PreventLateClockOut,
+		in.SelfieRequired, in.MinimumLocationAccuracyMeters, in.UnscheduledRequiresApproval, in.WorkMoreRequiresApproval,
+		in.UnscheduledBreakRequiresApproval, in.PreventUnscheduledBreak, in.ScheduledBreakStartOffsetMinutes, in.ScheduledBreakEndOffsetMinutes,
+		in.BreakRoundingMinutes)
+	if err != nil {
+		writeConflict(w, r, "POLICY_EXISTS", "Nama kebijakan sudah digunakan.", err)
+		return
+	}
+	for _, raw := range in.Modes {
+		mode := strings.ToUpper(raw)
+		if !allowed[mode] {
+			writeValidation(w, r, "Mode absensi tidak dikenal: "+raw)
+			return
+		}
+		var settings any
+		if mode == "GEOFENCE" {
+			encoded, _ := json.Marshal(map[string]any{"radiusMeters": *in.GeofenceRadiusMeters})
+			settings = string(encoded)
+		}
+		if mode == "WIFI" {
+			networks := make([]map[string]string, 0, len(in.WiFiNetworks))
+			for _, network := range in.WiFiNetworks {
+				hash := sha256.Sum256([]byte(normalizeWiFiBSSID(network.BSSID)))
+				networks = append(networks, map[string]string{"ssid": strings.TrimSpace(network.SSID), "bssidHash": fmt.Sprintf("%x", hash)})
+			}
+			encoded, _ := json.Marshal(map[string]any{"networks": networks})
+			settings = string(encoded)
+		}
+		if mode == "FACE_VERIFICATION" {
+			failClosed := true
+			if in.FaceFailClosed != nil {
+				failClosed = *in.FaceFailClosed
+			}
+			encoded, _ := json.Marshal(map[string]any{"failClosed": failClosed, "minimumScore": 0.8})
+			settings = string(encoded)
+		}
+		if mode == "DEVICE_INTEGRITY" {
+			failClosed := true
+			if in.IntegrityFailClosed != nil {
+				failClosed = *in.IntegrityFailClosed
+			}
+			maxRiskScore := 30
+			if in.MaxRiskScore != nil {
+				maxRiskScore = *in.MaxRiskScore
+			}
+			encoded, _ := json.Marshal(map[string]any{"failClosed": failClosed, "maxRiskScore": maxRiskScore})
+			settings = string(encoded)
+		}
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO attendance_policy_modes(policy_id,mode,settings) VALUES(UUID_TO_BIN(?),?,?)`, id, mode, settings); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO policy_assignments(id,organization_id,policy_id,section_id,membership_id,valid_from) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(NULLIF(?,'')),UUID_TO_BIN(NULLIF(?,'')),?)`, assignmentID, p.OrganizationID, id, in.SectionID, in.MembershipID, now)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = insertAudit(r.Context(), tx, p, "policy.create", "attendance_policy", id, map[string]any{"modes": in.Modes}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"data": map[string]string{"id": id}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func normalizeWiFiBSSID(value string) string {
+	return strings.ToLower(strings.NewReplacer(":", "", "-", "").Replace(strings.TrimSpace(value)))
+}
+
+func (s *Server) listShifts(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	from, to, ok := operationRange(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.queryShifts(r, p.OrganizationID, "", from, to)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": items, "requestId": httpx.RequestID(r.Context())})
+}
+func (s *Server) myShifts(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	from, to, ok := operationRange(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.queryShifts(r, p.OrganizationID, p.MembershipID, from, to)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": items, "requestId": httpx.RequestID(r.Context())})
+}
+
+func operationRange(w http.ResponseWriter, r *http.Request) (time.Time, time.Time, bool) {
+	now := time.Now().UTC()
+	from, err := parseTimeQuery(r, "from", now.AddDate(0, 0, -7))
+	if err != nil {
+		writeValidation(w, r, "Tanggal mulai tidak valid.")
+		return time.Time{}, time.Time{}, false
+	}
+	to, err := parseTimeQuery(r, "to", now.AddDate(0, 0, 31))
+	if err != nil || !to.After(from) || to.Sub(from) > 366*24*time.Hour {
+		writeValidation(w, r, "Rentang tanggal tidak valid.")
+		return time.Time{}, time.Time{}, false
+	}
+	return from, to, true
+}
+
+func (s *Server) queryShifts(r *http.Request, orgID, membershipID string, from, to time.Time) ([]shiftItem, error) {
+	query := `SELECT BIN_TO_UUID(s.id),s.title,s.role_name,s.starts_at,s.ends_at,s.status,BIN_TO_UUID(sec.id),sec.name FROM shifts s JOIN sections sec ON sec.id=s.section_id`
+	args := []any{orgID, to.UTC(), from.UTC()}
+	if membershipID != "" {
+		query += ` JOIN shift_assignments sa ON sa.shift_id=s.id AND sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED'`
+		args = []any{membershipID, orgID, to.UTC(), from.UTC()}
+	}
+	query += ` WHERE s.organization_id=UUID_TO_BIN(?) AND s.starts_at<? AND s.ends_at>?`
+	if membershipID != "" {
+		query += ` AND s.status='PUBLISHED'`
+	}
+	query += ` ORDER BY s.starts_at`
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []shiftItem{}
+	for rows.Next() {
+		var v shiftItem
+		var role sql.NullString
+		if err := rows.Scan(&v.ID, &v.Title, &role, &v.StartsAt, &v.EndsAt, &v.Status, &v.Section.ID, &v.Section.Name); err != nil {
+			return nil, err
+		}
+		if role.Valid {
+			v.RoleName = &role.String
+		}
+		items = append(items, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if membershipID == "" {
+		for index := range items {
+			participants, err := s.queryShiftParticipants(r, orgID, items[index].ID)
+			if err != nil {
+				return nil, err
+			}
+			items[index].Participants = participants
+		}
+	}
+	return items, nil
+}
+
+func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	var in struct {
+		SectionID     string    `json:"sectionId"`
+		Title         string    `json:"title"`
+		RoleName      string    `json:"roleName"`
+		StartsAt      time.Time `json:"startsAt"`
+		EndsAt        time.Time `json:"endsAt"`
+		Publish       bool      `json:"publish"`
+		Open          bool      `json:"open"`
+		MembershipIDs []string  `json:"membershipIds"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.SectionID) == "" || strings.TrimSpace(in.Title) == "" || !in.EndsAt.After(in.StartsAt) {
+		writeValidation(w, r, "Lokasi, judul, dan rentang waktu shift yang valid wajib diisi.")
+		return
+	}
+	id, _ := identity.NewUUID()
+	status := "DRAFT"
+	var published any
+	if in.Publish {
+		status = "PUBLISHED"
+		published = time.Now().UTC()
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `INSERT INTO shifts(id,organization_id,section_id,title,role_name,starts_at,ends_at,status,published_at,is_open,created_by) SELECT UUID_TO_BIN(?),UUID_TO_BIN(?),id,?,NULLIF(?,''),?,?,?,?,?,UUID_TO_BIN(?) FROM sections WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?)`, id, p.OrganizationID, in.Title, in.RoleName, in.StartsAt.UTC(), in.EndsAt.UTC(), status, published, in.Open, p.UserID, in.SectionID, p.OrganizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		writeValidation(w, r, "Lokasi tidak ditemukan pada organisasi ini.")
+		return
+	}
+	assigned := map[string]bool{}
+	for _, membershipID := range in.MembershipIDs {
+		membershipID = strings.TrimSpace(membershipID)
+		if membershipID == "" || assigned[membershipID] {
+			continue
+		}
+		assigned[membershipID] = true
+		if in.Publish {
+			var conflicts int
+			if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts existing ON existing.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND existing.status='PUBLISHED' AND existing.starts_at<? AND existing.ends_at>?`, membershipID, in.EndsAt.UTC(), in.StartsAt.UTC()).Scan(&conflicts); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			if conflicts > 0 {
+				httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SHIFT_CONFLICT", Message: "Karyawan memiliki shift lain yang bertumpang tindih."})
+				return
+			}
+		}
+		assignmentID, _ := identity.NewUUID()
+		result, err = tx.ExecContext(r.Context(), `INSERT INTO shift_assignments(id,shift_id,membership_id) SELECT UUID_TO_BIN(?),UUID_TO_BIN(?),id FROM organization_memberships WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='ACTIVE'`, assignmentID, id, membershipID, p.OrganizationID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		count, _ = result.RowsAffected()
+		if count == 0 {
+			writeValidation(w, r, "Karyawan shift tidak ditemukan.")
+			return
+		}
+	}
+	if err = insertAudit(r.Context(), tx, p, "shift.create", "shift", id, map[string]any{"status": status, "open": in.Open}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"data": map[string]string{"id": id}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) publishShift(w http.ResponseWriter, r *http.Request) {
+	s.changeShiftPublication(w, r, true)
+}
+
+func (s *Server) unpublishShift(w http.ResponseWriter, r *http.Request) {
+	s.changeShiftPublication(w, r, false)
+}
+
+func (s *Server) changeShiftPublication(w http.ResponseWriter, r *http.Request, publish bool) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	shiftID := strings.TrimSpace(chi.URLParam(r, "shiftID"))
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+	var startsAt, endsAt time.Time
+	err = tx.QueryRowContext(r.Context(), `SELECT starts_at,ends_at FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, shiftID, p.OrganizationID).Scan(&startsAt, &endsAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "SHIFT_NOT_FOUND", Message: "Shift tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if publish {
+		var conflicts int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments target JOIN shift_assignments other ON other.membership_id=target.membership_id AND other.shift_id<>target.shift_id AND other.status<>'CANCELLED' JOIN shifts existing ON existing.id=other.shift_id AND existing.status='PUBLISHED' WHERE target.shift_id=UUID_TO_BIN(?) AND target.status<>'CANCELLED' AND existing.starts_at<? AND existing.ends_at>?`, shiftID, endsAt, startsAt).Scan(&conflicts); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if conflicts > 0 {
+			httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SHIFT_CONFLICT", Message: "Shift tidak dapat diterbitkan karena jadwal karyawan bertumpang tindih."})
+			return
+		}
+		_, err = tx.ExecContext(r.Context(), `UPDATE shifts SET status='PUBLISHED',published_at=COALESCE(published_at,UTC_TIMESTAMP(6)),updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?)`, shiftID)
+	} else {
+		_, err = tx.ExecContext(r.Context(), `UPDATE shifts SET status='DRAFT',published_at=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?)`, shiftID)
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	action, status := "shift.unpublish", "DRAFT"
+	if publish {
+		action, status = "shift.publish", "PUBLISHED"
+	}
+	if err = insertAudit(r.Context(), tx, p, action, "shift", shiftID, map[string]any{"status": status}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]string{"id": shiftID, "status": status}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) myAttendancePolicy(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	sectionID := strings.TrimSpace(r.URL.Query().Get("sectionId"))
+	var v policyItem
+	var accuracy sql.NullFloat64
+	var breakStart, breakEnd, rounding sql.NullInt64
+	err := s.db.QueryRowContext(r.Context(), `SELECT BIN_TO_UUID(ap.id),ap.name,ap.version,ap.selfie_required,ap.minimum_location_accuracy_meters,ap.early_clock_in_minutes,ap.late_clock_in_minutes,ap.early_clock_out_minutes,ap.late_clock_out_minutes,ap.prevent_early_clock_in,ap.prevent_late_clock_in,ap.prevent_early_clock_out,ap.prevent_late_clock_out,ap.work_more_requires_approval,ap.unscheduled_break_requires_approval,ap.prevent_unscheduled_break,ap.scheduled_break_start_offset_minutes,ap.scheduled_break_end_offset_minutes,ap.break_rounding_minutes,ap.status FROM policy_assignments pa JOIN attendance_policies ap ON ap.id=pa.policy_id AND ap.status='ACTIVE' WHERE pa.organization_id=UUID_TO_BIN(?) AND (pa.membership_id=UUID_TO_BIN(?) OR (pa.membership_id IS NULL AND pa.section_id=UUID_TO_BIN(NULLIF(?,''))) OR (pa.membership_id IS NULL AND pa.section_id IS NULL)) AND (pa.valid_from IS NULL OR pa.valid_from<=UTC_TIMESTAMP(6)) AND (pa.valid_until IS NULL OR pa.valid_until>UTC_TIMESTAMP(6)) ORDER BY CASE WHEN pa.membership_id IS NOT NULL THEN 1 WHEN pa.section_id IS NOT NULL THEN 2 ELSE 3 END,COALESCE(pa.valid_from,pa.created_at) DESC LIMIT 1`, p.OrganizationID, p.MembershipID, sectionID).Scan(&v.ID, &v.Name, &v.Version, &v.SelfieRequired, &accuracy, &v.EarlyClockInMinutes, &v.LateClockInMinutes, &v.EarlyClockOutMinutes, &v.LateClockOutMinutes, &v.PreventEarlyClockIn, &v.PreventLateClockIn, &v.PreventEarlyClockOut, &v.PreventLateClockOut, &v.WorkMoreRequiresApproval, &v.UnscheduledBreakRequiresApproval, &v.PreventUnscheduledBreak, &breakStart, &breakEnd, &rounding, &v.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "ATTENDANCE_POLICY_MISSING", Message: "Kebijakan absensi belum dikonfigurasi."})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if accuracy.Valid {
+		v.MinimumLocationAccuracyMeters = &accuracy.Float64
+	}
+	if breakStart.Valid {
+		value := uint16(breakStart.Int64)
+		v.ScheduledBreakStartOffsetMinutes = &value
+	}
+	if breakEnd.Valid {
+		value := uint16(breakEnd.Int64)
+		v.ScheduledBreakEndOffsetMinutes = &value
+	}
+	if rounding.Valid {
+		value := uint16(rounding.Int64)
+		v.BreakRoundingMinutes = &value
+	}
+	v.Modes = []string{}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT mode FROM attendance_policy_modes WHERE policy_id=UUID_TO_BIN(?) ORDER BY mode`, v.ID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var mode string
+		if err := rows.Scan(&mode); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		v.Modes = append(v.Modes, mode)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": v, "requestId": httpx.RequestID(r.Context())})
+}
+
+func insertAudit(ctx context.Context, tx *sql.Tx, p auth.Principal, action, resourceType, resourceID string, metadata any) error {
+	auditID, _ := identity.NewUUID()
+	encoded, _ := json.Marshal(metadata)
+	_, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(id,organization_id,actor_user_id,action,resource_type,resource_id,metadata) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,UUID_TO_BIN(NULLIF(?,'')),?)`, auditID, p.OrganizationID, p.UserID, action, resourceType, resourceID, string(encoded))
+	return err
+}
+
+func writeValidation(w http.ResponseWriter, r *http.Request, message string) {
+	httpx.WriteError(w, r, &httpx.Error{Status: http.StatusBadRequest, Code: "VALIDATION_ERROR", Message: message})
+}
+func writeConflict(w http.ResponseWriter, r *http.Request, code, message string, err error) {
+	httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: code, Message: message, Err: err})
+}

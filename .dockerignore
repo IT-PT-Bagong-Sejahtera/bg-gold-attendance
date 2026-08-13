@@ -1,0 +1,14 @@
+.git
+.env
+.runtime
+node_modules
+**/node_modules
+**/dist
+**/coverage
+**/.expo
+**/.gradle
+**/android/app/build
+**/android/build
+**/ios/Pods
+*.log
+*.apk

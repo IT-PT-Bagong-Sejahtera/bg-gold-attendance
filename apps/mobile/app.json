@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "BG GOLD Attendance",
+    "slug": "bg-gold-attendance",
+    "scheme": "bggold-attendance",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/bg-gold-logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/bg-gold-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FBF8F1"
+    },
+    "android": {
+      "package": "com.bggold.attendance",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/bg-gold-logo.png",
+        "backgroundColor": "#FBF8F1"
+      },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_WIFI_STATE", "CHANGE_WIFI_STATE", "NEARBY_WIFI_DEVICES", "CAMERA", "POST_NOTIFICATIONS"]
+    },
+    "ios": {
+      "bundleIdentifier": "com.bggold.attendance",
+      "supportsTablet": true,
+      "entitlements": {
+        "com.apple.developer.networking.wifi-info": true
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Lokasi dicatat sebagai bukti saat Anda melakukan absensi.",
+        "NSCameraUsageDescription": "Kamera digunakan untuk bukti selfie bila kebijakan absensi mewajibkannya."
+      }
+    },
+    "plugins": [
+      ["expo-location", { "locationWhenInUsePermission": "Lokasi dicatat sebagai bukti saat Anda melakukan absensi." }],
+      ["expo-image-picker", { "cameraPermission": "Kamera digunakan untuk bukti selfie bila kebijakan absensi mewajibkannya." }],
+      "@react-native-community/datetimepicker",
+      "expo-secure-store",
+      "expo-notifications"
+    ]
+  }
+}

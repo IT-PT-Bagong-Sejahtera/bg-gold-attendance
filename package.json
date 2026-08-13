@@ -1,0 +1,28 @@
+{
+  "name": "bg-gold-attendance",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/admin",
+    "apps/mobile",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:admin": "npm --workspace @bg-gold/admin run dev",
+    "dev:mobile": "npm --workspace @bg-gold/mobile run start",
+    "build:admin": "npm --workspace @bg-gold/admin run build",
+    "test:admin": "npm --workspace @bg-gold/admin run test",
+    "test:mobile": "npm --workspace @bg-gold/mobile run test",
+    "typecheck": "npm --workspace @bg-gold/admin run typecheck && npm --workspace @bg-gold/mobile run typecheck"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "react-test-renderer": "19.2.0"
+  }
+}

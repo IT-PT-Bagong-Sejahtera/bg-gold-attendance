@@ -1,0 +1,1296 @@
+openapi: 3.1.0
+info:
+  title: BG GOLD Attendance API
+  version: 0.1.0
+  description: Organization-scoped REST API. All timestamps are UTC RFC 3339 and attendance time is server-authoritative.
+servers:
+  - url: http://localhost:8080/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      security: []
+      summary: Create an access and rotating refresh session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginInput" }
+      responses:
+        "200": { $ref: "#/components/responses/TokenPair" }
+        "401": { $ref: "#/components/responses/Error" }
+  /audit-logs:
+    get:
+      summary: List organization-scoped immutable audit activity
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: action, schema: { type: string } }
+        - { in: query, name: resourceType, schema: { type: string } }
+        - { in: query, name: actorUserId, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        "200": { description: Audit items and optional top-level nextCursor }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties: { refreshToken: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/TokenPair" }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/password/forgot:
+    post:
+      security: []
+      summary: Request a non-enumerating password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: { email: { type: string, format: email } }
+      responses:
+        "202":
+          description: Generic response regardless of account existence
+        "422": { $ref: "#/components/responses/Error" }
+  /auth/password/reset:
+    post:
+      security: []
+      summary: Consume a single-use reset token and revoke existing sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token: { type: string }
+                newPassword: { type: string, format: password, minLength: 12 }
+      responses:
+        "200": { description: Password updated and sessions revoked }
+        "422": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      summary: Revoke the active session
+      responses:
+        "204": { description: Session revoked }
+  /me:
+    get:
+      summary: Get active user and organization membership
+      responses:
+        "200":
+          description: Current identity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeEnvelope" }
+  /me/organizations:
+    get:
+      summary: List organizations available to the user
+      responses:
+        "200": { description: Organization list }
+  /me/active-organization:
+    post:
+      summary: Switch organization and rotate the active session token pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationId]
+              properties:
+                organizationId: { type: string, format: uuid }
+      responses:
+        "200": { $ref: "#/components/responses/TokenPair" }
+        "403": { $ref: "#/components/responses/Error" }
+  /me/shifts:
+    get:
+      summary: List published shifts assigned to the active membership
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        "200": { $ref: "#/components/responses/ShiftList" }
+  /me/attendance-policy:
+    get:
+      summary: Resolve effective attendance policy
+      parameters:
+        - in: query
+          name: sectionId
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { $ref: "#/components/responses/Policy" }
+        "409": { $ref: "#/components/responses/Error" }
+  /me/attendance/today:
+    get:
+      summary: Get current attendance state and recent events
+      responses:
+        "200":
+          description: Attendance state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      { data: { $ref: "#/components/schemas/AttendanceToday" } }
+  /me/attendance/history:
+    get:
+      summary: List append-only attendance events
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - {
+            in: query,
+            name: limit,
+            schema: { type: integer, minimum: 1, maximum: 100 },
+          }
+        - { in: query, name: cursor, schema: { type: string }, description: Opaque cursor returned as nextCursor by the preceding page. }
+      responses:
+        "200": { description: Attendance event list with an optional top-level nextCursor }
+        "400": { $ref: "#/components/responses/Error" }
+  /me/requests:
+    get:
+      summary: List the active employee's attendance requests
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceRequestList" }
+  /attendance/actions:
+    post:
+      summary: Submit an idempotent attendance state transition
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, maxLength: 160 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendanceActionInput" }
+      responses:
+        "201": { description: New event recorded }
+        "200": { description: Previously stored idempotent response }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/open-shifts:
+    get:
+      summary: List published open shifts available to the active employee
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Open shifts with the employee request status }
+  /shifts/{shiftId}/requests:
+    post:
+      summary: Request an available open shift
+      parameters:
+        - { in: path, name: shiftId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201": { description: Pending shift request created }
+        "409": { $ref: "#/components/responses/Error" }
+  /shift-requests:
+    get:
+      summary: List organization shift requests for manager review
+      responses:
+        "200": { description: Shift request queue }
+        "403": { $ref: "#/components/responses/Error" }
+  /shift-requests/{requestId}/decision:
+    post:
+      summary: Approve or reject a shift request
+      parameters:
+        - { in: path, name: requestId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Decision stored; approval creates an assignment }
+        "409": { $ref: "#/components/responses/Error" }
+  /sections/{sectionId}/dynamic-qr:
+    post:
+      summary: Issue a signed single-use attendance QR for an active section
+      parameters:
+        - in: path
+          name: sectionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201":
+          description: QR token valid for 45 seconds
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      { data: { $ref: "#/components/schemas/DynamicQR" } }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /attendance/requests:
+    get:
+      summary: List organization attendance requests for review
+      parameters:
+        - in: query
+          name: status
+          schema: { enum: [PENDING, APPROVED, REJECTED, WITHDRAWN] }
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceRequestList" }
+        "403": { $ref: "#/components/responses/Error" }
+  /attendance/records:
+    get:
+      summary: List organization attendance records with effective decisions and latest corrections
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - {
+            in: query,
+            name: membershipId,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            in: query,
+            name: limit,
+            schema: { type: integer, minimum: 1, maximum: 500 },
+          }
+      responses:
+        "200": { description: Organization-scoped attendance record list }
+        "403": { $ref: "#/components/responses/Error" }
+  /attendance/timesheets:
+    get:
+      summary: Compute organization timesheets using effective corrections and break rounding
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - {
+            in: query,
+            name: membershipId,
+            schema: { type: string, format: uuid },
+          }
+      responses:
+        "200": { description: Daily gross, actual break, rounded break, and net work minutes }
+        "403": { $ref: "#/components/responses/Error" }
+  /reports/attendance.csv:
+    get:
+      summary: Export effective attendance records as UTF-8 CSV
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: membershipId, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Attendance CSV including correction markers }
+        "403": { $ref: "#/components/responses/Error" }
+  /reports/timesheets.csv:
+    get:
+      summary: Export daily gross, break, and net timesheets as UTF-8 CSV
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: membershipId, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Timesheet CSV using policy-rounded breaks }
+        "403": { $ref: "#/components/responses/Error" }
+  /attendance/requests/{requestId}/decision:
+    post:
+      summary: Append an approval or rejection decision
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendanceDecisionInput" }
+      responses:
+        "200": { description: Decision stored and effective state updated }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /attendance/corrections:
+    post:
+      summary: Append a correction without mutating the original event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendanceCorrectionInput" }
+      responses:
+        "201": { description: Correction event and link created }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /leave-types:
+    get:
+      summary: List active organization leave types
+      responses:
+        "200": { $ref: "#/components/responses/LeaveTypeList" }
+    post:
+      summary: Create an organization leave type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateLeaveType" }
+      responses:
+        "201": { description: Leave type created }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /leave-balances:
+    post:
+      summary: Set an employee leave entitlement for a calendar year
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetLeaveBalance" }
+      responses:
+        "200": { description: Entitlement stored }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/leave-balances:
+    get:
+      summary: List the active employee's leave balances
+      parameters:
+        - { in: query, name: year, schema: { type: integer, minimum: 2000, maximum: 2200 } }
+      responses:
+        "200": { $ref: "#/components/responses/LeaveBalanceList" }
+  /me/leave-requests:
+    get:
+      summary: List the active employee's leave requests
+      responses:
+        "200": { $ref: "#/components/responses/LeaveRequestList" }
+    post:
+      summary: Request leave and reserve the required balance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateLeaveRequest" }
+      responses:
+        "201": { description: Pending leave request created }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/leave-requests/{requestId}/withdraw:
+    post:
+      summary: Withdraw a pending own leave request and release its balance
+      parameters:
+        - { in: path, name: requestId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Request withdrawn }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /leave-requests:
+    get:
+      summary: List organization leave requests for manager review
+      parameters:
+        - { in: query, name: status, schema: { enum: [PENDING, APPROVED, REJECTED, WITHDRAWN] } }
+      responses:
+        "200": { $ref: "#/components/responses/LeaveRequestList" }
+        "403": { $ref: "#/components/responses/Error" }
+  /leave-requests/{requestId}/decision:
+    post:
+      summary: Approve or reject leave and update reserved balances atomically
+      parameters:
+        - { in: path, name: requestId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeaveDecisionInput" }
+      responses:
+        "200": { description: Append-only decision stored }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /attachments/attendance-selfie:
+    post:
+      summary: Upload a private attendance selfie with 180-day retention
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Finalized private attachment }
+        "400": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+  /attachments/face-image:
+    post:
+      summary: Upload a private face image with 30-day retention
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Finalized private face image }
+        "400": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+  /me/face/enroll:
+    post:
+      summary: Enroll the active membership with the configured face provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FaceImageInput" }
+      responses:
+        "200": { description: Active face enrollment }
+        "503": { $ref: "#/components/responses/Error" }
+  /me/face/verify:
+    post:
+      summary: Create a short-lived face and liveness verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FaceImageInput" }
+      responses:
+        "201": { description: Five-minute face verification }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /attachments/claim-receipt:
+    post:
+      summary: Upload a private claim receipt with seven-year retention
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Finalized private claim receipt }
+        "400": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+  /claim-types:
+    get:
+      summary: List active organization claim types
+      responses:
+        "200": { description: Claim type list }
+    post:
+      summary: Create an organization claim type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateClaimType" }
+      responses:
+        "201": { description: Claim type created }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /me/claims:
+    get:
+      summary: List the active employee's claims
+      responses:
+        "200": { description: Own claim list }
+    post:
+      summary: Submit a claim with an optional validated private receipt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateClaim" }
+      responses:
+        "201": { description: Pending claim created; includes truthful OCR status and structured result when configured. }
+        "400": { $ref: "#/components/responses/Error" }
+  /me/claims/{claimId}/withdraw:
+    post:
+      summary: Withdraw a pending own claim
+      parameters:
+        - { in: path, name: claimId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Claim withdrawn }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /claims:
+    get:
+      summary: List organization claims for manager review
+      parameters:
+        - { in: query, name: status, schema: { enum: [PENDING, APPROVED, REJECTED, WITHDRAWN] } }
+      responses:
+        "200": { description: Organization claim list }
+        "403": { $ref: "#/components/responses/Error" }
+  /claims/{claimId}/decision:
+    post:
+      summary: Append an approval or rejection decision to a pending claim
+      parameters:
+        - { in: path, name: claimId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimDecisionInput" }
+      responses:
+        "200": { description: Claim decision stored }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /claims/{claimId}/receipt-url:
+    get:
+      summary: Issue a five-minute private receipt URL to the owner or authorized reviewer
+      parameters:
+        - { in: path, name: claimId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Short-lived signed object URL }
+        "404": { $ref: "#/components/responses/Error" }
+  /announcements:
+    post:
+      summary: Create and optionally publish a scoped announcement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAnnouncement" }
+      responses:
+        "201": { description: Announcement created; publication creates inbox and outbox rows atomically }
+        "403": { $ref: "#/components/responses/Error" }
+  /me/announcements:
+    get:
+      summary: List active announcements scoped to the current membership
+      responses:
+        "200": { description: Announcement feed with read and acknowledgment state }
+  /me/announcements/{announcementId}/receipt:
+    post:
+      summary: Mark an announcement read or acknowledged
+      parameters:
+        - { in: path, name: announcementId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties: { action: { enum: [READ, ACKNOWLEDGE] } }
+      responses:
+        "200": { description: Receipt state stored }
+        "404": { $ref: "#/components/responses/Error" }
+  /me/notifications:
+    get:
+      summary: List the current membership's notification inbox
+      responses:
+        "200": { description: Notification list }
+  /me/notifications/unread-count:
+    get:
+      summary: Count unread notifications for the current membership
+      responses:
+        "200": { description: Unread badge count }
+  /me/notifications/{notificationId}/read:
+    post:
+      summary: Mark an own notification read idempotently
+      parameters:
+        - { in: path, name: notificationId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Notification marked read }
+        "404": { $ref: "#/components/responses/Error" }
+  /me/devices:
+    post:
+      summary: Idempotently register an app installation and optional native push token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterDevice" }
+      responses:
+        "200": { description: Device registration active }
+  /me/devices/{deviceId}:
+    delete:
+      summary: Revoke an own push device
+      parameters:
+        - { in: path, name: deviceId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Device revoked }
+        "404": { $ref: "#/components/responses/Error" }
+  /employees:
+    get:
+      summary: List organization employees
+      responses: { "200": { description: Employee list } }
+    post:
+      summary: Create an employee and role memberships
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateEmployee" }
+      responses:
+        "201": { description: Employee created }
+        "409": { $ref: "#/components/responses/Error" }
+  /employees/{employeeId}/activate:
+    post:
+      summary: Reactivate an organization membership
+      parameters:
+        - in: path
+          name: employeeId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Membership activated }
+        "404": { $ref: "#/components/responses/Error" }
+  /employees/{employeeId}:
+    patch:
+      summary: Update employee profile and organization roles
+      parameters:
+        - in: path
+          name: employeeId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateEmployee" }
+      responses:
+        "200": { description: Employee updated and organization sessions revoked }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /employees/{employeeId}/deactivate:
+    post:
+      summary: Deactivate a membership and revoke its organization sessions
+      parameters:
+        - in: path
+          name: employeeId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Membership deactivated }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /sections:
+    get:
+      summary: List work locations
+      responses: { "200": { description: Location list } }
+    post:
+      summary: Create a work location
+      responses: { "201": { description: Location created } }
+  /sections/{sectionId}:
+    patch:
+      summary: Update an organization-scoped work location and coordinates
+      parameters:
+        - in: path
+          name: sectionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Location updated }
+        "404": { $ref: "#/components/responses/Error" }
+  /sections/{sectionId}/activate:
+    post:
+      summary: Activate a work location
+      responses:
+        "200": { description: Location activated }
+  /sections/{sectionId}/deactivate:
+    post:
+      summary: Deactivate a work location
+      responses:
+        "200": { description: Location deactivated }
+  /policies:
+    get:
+      summary: List attendance policies
+      responses: { "200": { description: Policy list } }
+    post:
+      summary: Create and activate an organization, section, or employee policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePolicy" }
+      responses: { "201": { description: Policy created } }
+  /policies/{policyId}:
+    patch:
+      summary: Update an active policy in place and increment its version
+      parameters:
+        - { in: path, name: policyId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePolicy" }
+      responses:
+        "200": { description: Policy updated and audited }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /policies/{policyId}/archive:
+    post:
+      summary: Archive a policy and close all current assignments
+      parameters:
+        - { in: path, name: policyId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Policy archived idempotently and audited }
+        "404": { $ref: "#/components/responses/Error" }
+  /shifts:
+    get:
+      summary: List organization shifts
+      responses: { "200": { $ref: "#/components/responses/ShiftList" } }
+    post:
+      summary: Create a shift and its assignments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateShift" }
+      responses: { "201": { description: Shift created } }
+  /shifts/{shiftId}/publish:
+    post:
+      summary: Publish a draft shift after employee overlap validation
+      responses:
+        "200": { description: Shift published }
+        "409": { $ref: "#/components/responses/Error" }
+  /shifts/{shiftId}/unpublish:
+    post:
+      summary: Return a published shift to draft
+      responses:
+        "200": { description: Shift unpublished }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Envelope:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: {}
+        requestId: { type: string }
+    ErrorEnvelope:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requestId: { type: string }
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+        organizationId: { type: string, format: uuid }
+    TokenPairData:
+      type: object
+      required: [accessToken, accessExpiresAt, refreshToken, refreshExpiresAt]
+      properties:
+        accessToken: { type: string }
+        accessExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string }
+        refreshExpiresAt: { type: string, format: date-time }
+    MeEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required:
+                [
+                  id,
+                  email,
+                  fullName,
+                  membershipId,
+                  organizationId,
+                  timezone,
+                  employeeNumber,
+                  roles,
+                ]
+              properties:
+                id: { type: string, format: uuid }
+                email: { type: string, format: email }
+                fullName: { type: string }
+                membershipId: { type: string, format: uuid }
+                organizationId: { type: string, format: uuid }
+                timezone: { type: string, example: Asia/Jakarta }
+                employeeNumber: { type: string }
+                roles: { type: array, items: { type: string } }
+    AttendanceToday:
+      type: object
+      required: [state, latestEvents]
+      properties:
+        state: { enum: [NOT_STARTED, WORKING, ON_BREAK, COMPLETED, PENDING] }
+        activeShiftId: { type: string, format: uuid }
+        latestEvents:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/AttendanceEvent" },
+          }
+    AttendanceEvent:
+      type: object
+      required: [id, actionType, decision, recordedAt]
+      properties:
+        id: { type: string, format: uuid }
+        actionType:
+          {
+            enum:
+              [
+                CLOCK_IN,
+                CLOCK_OUT,
+                START_BREAK,
+                END_BREAK,
+                WORK_MORE,
+                AUTO_CLOCK_OUT,
+                CORRECTION,
+              ],
+          }
+        decision: { enum: [APPROVED, PENDING, REJECTED] }
+        recordedAt: { type: string, format: date-time }
+        reason: { type: [string, "null"] }
+    AttendanceActionInput:
+      type: object
+      required: [type, evidence]
+      properties:
+        type: { enum: [CLOCK_IN, CLOCK_OUT, START_BREAK, END_BREAK, WORK_MORE] }
+        shiftId: { type: string, format: uuid }
+        sectionId: { type: string, format: uuid }
+        reason: { type: string, maxLength: 500 }
+        evidence:
+          type: object
+          properties:
+            attachmentId: { type: string, format: uuid }
+            deviceId: { type: string, format: uuid }
+            dynamicQrToken:
+              type: string
+              description: Signed short-lived token required for CLOCK_IN, CLOCK_OUT, and WORK_MORE under a DYNAMIC_QR policy.
+            faceVerificationId:
+              type: string
+              format: uuid
+              description: Short-lived successful face/liveness verification owned by the active membership.
+            integrityToken:
+              type: string
+              description: Encrypted Play Integrity token bound to the attendance request hash. Never persisted.
+            location:
+              type: [object, "null"]
+              required: [latitude, longitude, accuracyMeters, capturedAt]
+              properties:
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                accuracyMeters: { type: number, minimum: 0 }
+                capturedAt: { type: string, format: date-time }
+            wifi:
+              type: [object, "null"]
+              required: [ssid, bssid]
+              properties:
+                ssid: { type: string }
+                bssid: { type: string, description: Current access-point BSSID; stored only as SHA-256. }
+    FaceImageInput:
+      type: object
+      required: [attachmentId]
+      properties:
+        attachmentId: { type: string, format: uuid }
+    DynamicQR:
+      type: object
+      required: [token, sectionId, expiresAt]
+      properties:
+        token: { type: string }
+        sectionId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+    AttendanceRequest:
+      type: object
+      required:
+        [
+          id,
+          eventId,
+          membershipId,
+          employeeName,
+          employeeNumber,
+          actionType,
+          status,
+          requestedAt,
+          recordedAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        eventId: { type: string, format: uuid }
+        membershipId: { type: string, format: uuid }
+        employeeName: { type: string }
+        employeeNumber: { type: string }
+        actionType:
+          { enum: [CLOCK_IN, CLOCK_OUT, START_BREAK, END_BREAK, WORK_MORE] }
+        status: { enum: [PENDING, APPROVED, REJECTED, WITHDRAWN] }
+        requestedAt: { type: string, format: date-time }
+        recordedAt: { type: string, format: date-time }
+        reason: { type: [string, "null"] }
+        decidedAt: { type: [string, "null"], format: date-time }
+        decisionReason: { type: [string, "null"] }
+    AttendanceDecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { enum: [APPROVED, REJECTED] }
+        reason:
+          type: string
+          maxLength: 500
+          description: Required when rejecting.
+    AttendanceCorrectionInput:
+      type: object
+      required:
+        [originalEventId, correctedActionType, correctedRecordedAt, reason]
+      properties:
+        originalEventId: { type: string, format: uuid }
+        correctedActionType:
+          { enum: [CLOCK_IN, CLOCK_OUT, START_BREAK, END_BREAK, WORK_MORE] }
+        correctedRecordedAt: { type: string, format: date-time }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    LeaveType:
+      type: object
+      required: [id, code, name, paid, status]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        paid: { type: boolean }
+        status: { enum: [ACTIVE, ARCHIVED] }
+    LeaveBalance:
+      type: object
+      required: [id, leaveTypeId, leaveTypeName, year, entitlementDays, usedDays, pendingDays, availableDays]
+      properties:
+        id: { type: string, format: uuid }
+        leaveTypeId: { type: string, format: uuid }
+        leaveTypeName: { type: string }
+        year: { type: integer }
+        entitlementDays: { type: number }
+        usedDays: { type: number }
+        pendingDays: { type: number }
+        availableDays: { type: number }
+    LeaveRequest:
+      type: object
+      required: [id, membershipId, employeeName, employeeNumber, leaveTypeId, leaveTypeName, startsOn, endsOn, totalDays, reason, status, requestedAt]
+      properties:
+        id: { type: string, format: uuid }
+        membershipId: { type: string, format: uuid }
+        employeeName: { type: string }
+        employeeNumber: { type: string }
+        leaveTypeId: { type: string, format: uuid }
+        leaveTypeName: { type: string }
+        startsOn: { type: string, format: date }
+        endsOn: { type: string, format: date }
+        totalDays: { type: number }
+        reason: { type: string }
+        status: { enum: [PENDING, APPROVED, REJECTED, WITHDRAWN] }
+        requestedAt: { type: string, format: date-time }
+        decisionReason: { type: [string, "null"] }
+        decidedAt: { type: [string, "null"], format: date-time }
+    CreateLeaveType:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 30 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        paid: { type: boolean, default: true }
+    SetLeaveBalance:
+      type: object
+      required: [membershipId, leaveTypeId, year, entitlementDays]
+      properties:
+        membershipId: { type: string, format: uuid }
+        leaveTypeId: { type: string, format: uuid }
+        year: { type: integer, minimum: 2000, maximum: 2200 }
+        entitlementDays: { type: number, minimum: 0, maximum: 366 }
+    CreateLeaveRequest:
+      type: object
+      required: [leaveTypeId, startsOn, endsOn, reason]
+      properties:
+        leaveTypeId: { type: string, format: uuid }
+        startsOn: { type: string, format: date }
+        endsOn: { type: string, format: date }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    LeaveDecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { enum: [APPROVED, REJECTED] }
+        reason: { type: string, maxLength: 500, description: Required when rejecting. }
+    CreateClaimType:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 30 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        receiptRequired: { type: boolean, default: true }
+    CreateClaim:
+      type: object
+      required: [claimTypeId, title, amount, currency, incurredOn]
+      properties:
+        claimTypeId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        amount: { type: number, exclusiveMinimum: 0, maximum: 999999999999.99 }
+        currency: { type: string, minLength: 3, maxLength: 3, default: IDR }
+        incurredOn: { type: string, format: date }
+        notes: { type: string, maxLength: 1000 }
+        attachmentId: { type: string, format: uuid }
+    ReceiptOCRResult:
+      type: object
+      description: Structured receipt evidence. Raw OCR text and provider credentials are never exposed.
+      required: [confidence]
+      properties:
+        merchant: { type: string }
+        total: { type: number, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        transactionDate: { type: string, format: date }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        reference: { type: string }
+    ClaimDecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { enum: [APPROVED, REJECTED] }
+        reason: { type: string, maxLength: 500, description: Required when rejecting. }
+    CreateAnnouncement:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 180 }
+        body: { type: string, minLength: 1, maxLength: 10000 }
+        priority: { enum: [NORMAL, IMPORTANT, URGENT], default: NORMAL }
+        requiresAcknowledgment: { type: boolean, default: false }
+        expiresAt: { type: string, format: date-time }
+        publish: { type: boolean, default: false }
+        audiences:
+          type: array
+          items:
+            type: object
+            required: [type]
+            properties:
+              type: { enum: [ALL, ROLE, SECTION] }
+              value: { type: string, description: Role code or section UUID; omitted for ALL. }
+    RegisterDevice:
+      type: object
+      required: [platform]
+      anyOf:
+        - required: [installationId]
+        - required: [pushToken]
+      properties:
+        platform: { enum: [ANDROID, IOS, WEB] }
+        installationId:
+          type: string
+          minLength: 1
+          maxLength: 160
+          description: Stable per-installation random identifier; stored only as a SHA-256 hash.
+        pushToken: { type: string, minLength: 1, maxLength: 500 }
+        deviceLabel: { type: string, maxLength: 160 }
+    CreateEmployee:
+      type: object
+      required: [email, fullName, employeeNumber]
+      properties:
+        email: { type: string, format: email }
+        fullName: { type: string }
+        employeeNumber: { type: string }
+        jobTitle: { type: string }
+        password:
+          type: string
+          minLength: 12
+          description: Optional legacy temporary password. Omit to send a one-time account invitation.
+        roles:
+          {
+            type: array,
+            items: { enum: [OWNER, ADMIN, HR, SUPERVISOR, EMPLOYEE] },
+          }
+    CreateShift:
+      type: object
+      required: [sectionId, title, startsAt, endsAt]
+      properties:
+        sectionId: { type: string, format: uuid }
+        title: { type: string }
+        roleName: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        publish: { type: boolean }
+        open: { type: boolean }
+        membershipIds: { type: array, items: { type: string, format: uuid } }
+    UpdateEmployee:
+      type: object
+      required: [fullName, employeeNumber, roles]
+      properties:
+        fullName: { type: string, minLength: 1 }
+        employeeNumber: { type: string, minLength: 1 }
+        jobTitle: { type: string }
+        roles:
+          type: array
+          minItems: 1
+          items: { enum: [OWNER, ADMIN, HR, SUPERVISOR, EMPLOYEE] }
+    CreatePolicy:
+      type: object
+      required: [name, modes]
+      properties:
+        name: { type: string }
+        modes:
+          type: array
+          items:
+            {
+              enum:
+                [
+                  ANYWHERE,
+                  LOCATION_ONLY,
+                  GEOFENCE,
+                  DYNAMIC_QR,
+                  WIFI,
+                  SELFIE,
+                  FACE_VERIFICATION,
+                  DEVICE_INTEGRITY,
+                ],
+            }
+        selfieRequired: { type: boolean }
+        minimumLocationAccuracyMeters: { type: number, minimum: 0 }
+        geofenceRadiusMeters: { type: number, minimum: 10, maximum: 5000 }
+        wifiNetworks:
+          type: array
+          items:
+            type: object
+            required: [ssid, bssid]
+            properties:
+              ssid: { type: string }
+              bssid: { type: string }
+        faceFailClosed: { type: boolean, default: true }
+        integrityFailClosed: { type: boolean, default: true }
+        maxRiskScore: { type: integer, minimum: 0, maximum: 100, default: 30 }
+        earlyClockInMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        lateClockInMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        earlyClockOutMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        lateClockOutMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        preventEarlyClockIn: { type: boolean }
+        preventLateClockIn: { type: boolean }
+        preventEarlyClockOut: { type: boolean }
+        preventLateClockOut: { type: boolean }
+        unscheduledRequiresApproval: { type: boolean }
+        workMoreRequiresApproval: { type: boolean }
+        unscheduledBreakRequiresApproval: { type: boolean }
+        preventUnscheduledBreak: { type: boolean }
+        scheduledBreakStartOffsetMinutes: { type: integer, minimum: 0 }
+        scheduledBreakEndOffsetMinutes: { type: integer, minimum: 1 }
+        breakRoundingMinutes: { type: integer, minimum: 1, maximum: 60 }
+        sectionId: { type: string, format: uuid }
+        membershipId: { type: string, format: uuid }
+    UpdatePolicy:
+      type: object
+      description: Partial active-policy update. Omitting modes preserves all current mode settings, including hashed Wi-Fi BSSIDs.
+      properties:
+        name: { type: string, minLength: 1 }
+        modes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { enum: [ANYWHERE, LOCATION_ONLY, GEOFENCE, DYNAMIC_QR, WIFI, SELFIE, FACE_VERIFICATION, DEVICE_INTEGRITY] }
+        selfieRequired: { type: boolean }
+        minimumLocationAccuracyMeters: { type: number, minimum: 0 }
+        geofenceRadiusMeters: { type: number, minimum: 10, maximum: 5000 }
+        wifiNetworks:
+          type: array
+          items:
+            type: object
+            required: [ssid, bssid]
+            properties:
+              ssid: { type: string }
+              bssid: { type: string }
+        faceFailClosed: { type: boolean }
+        integrityFailClosed: { type: boolean }
+        maxRiskScore: { type: integer, minimum: 0, maximum: 100 }
+        earlyClockInMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        lateClockInMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        earlyClockOutMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        lateClockOutMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        preventEarlyClockIn: { type: boolean }
+        preventLateClockIn: { type: boolean }
+        preventEarlyClockOut: { type: boolean }
+        preventLateClockOut: { type: boolean }
+  responses:
+    Error:
+      description: Stable machine-readable error
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/ErrorEnvelope" } },
+        }
+    TokenPair:
+      description: Token pair
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  { data: { $ref: "#/components/schemas/TokenPairData" } }
+    ShiftList:
+      description: Shift list
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/Envelope" } },
+        }
+    Policy:
+      description: Effective policy
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/Envelope" } },
+        }
+    AttendanceRequestList:
+      description: Attendance request list
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AttendanceRequest" }
+    LeaveTypeList:
+      description: Active leave type list
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveType" }
+    LeaveBalanceList:
+      description: Employee leave balance list
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveBalance" }
+    LeaveRequestList:
+      description: Leave request list
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveRequest" }

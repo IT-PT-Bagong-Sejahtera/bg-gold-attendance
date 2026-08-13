@@ -1,0 +1,8 @@
+.env
+bin/
+coverage.out
+logs/*
+!logs/README.md
+uploads/*
+!uploads/README.md
+*.log
