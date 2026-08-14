@@ -12,6 +12,11 @@ jest.mock("../lib/api", () => ({
     shifts: jest.fn(),
     openShifts: jest.fn(),
     requestShift: jest.fn(),
+    supervisorShifts: jest.fn(),
+    employees: jest.fn(),
+    sections: jest.fn(),
+    createShift: jest.fn(),
+    updateShiftParticipants: jest.fn(),
   },
 }));
 
@@ -22,9 +27,18 @@ describe("ScheduleScreen", () => {
     (api.shifts as jest.Mock).mockReset();
     (api.openShifts as jest.Mock).mockReset();
     (api.requestShift as jest.Mock).mockReset();
+    (api.supervisorShifts as jest.Mock).mockReset();
+    (api.employees as jest.Mock).mockReset();
+    (api.sections as jest.Mock).mockReset();
+    (api.createShift as jest.Mock).mockReset();
+    (api.updateShiftParticipants as jest.Mock).mockReset();
     (api.me as jest.Mock).mockResolvedValue({
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      roles: ["EMPLOYEE"],
     });
+    (api.supervisorShifts as jest.Mock).mockResolvedValue([]);
+    (api.employees as jest.Mock).mockResolvedValue([]);
+    (api.sections as jest.Mock).mockResolvedValue([]);
   });
 
   it("reserves list space while the schedule is loading", async () => {
@@ -103,6 +117,227 @@ describe("ScheduleScreen", () => {
       expect.any(String),
       expect.any(String),
     );
+  });
+
+  it("opens a shift and shows the coworkers assigned with the employee", async () => {
+    const startsAt = new Date();
+    startsAt.setHours(9, 0, 0, 0);
+    const endsAt = new Date(startsAt);
+    endsAt.setHours(17, 0, 0, 0);
+    (api.shifts as jest.Mock).mockResolvedValue([
+      {
+        id: "shift-detail",
+        title: "Shift Galeri Utama",
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        section: { id: "section-1", name: "BG GOLD Flagship" },
+        participants: [
+          {
+            membershipId: "employee-2",
+            employeeName: "Dimas Pratama",
+            employeeNumber: "BG-0214",
+          },
+        ],
+      },
+    ]);
+    (api.openShifts as jest.Mock).mockResolvedValue([]);
+
+    await render(<ScheduleScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", {
+        name: "Lihat detail jadwal Shift Galeri Utama",
+      }),
+    );
+
+    expect(await screen.findByText("KARYAWAN BERTUGAS")).toBeTruthy();
+    expect(screen.getByText("Dimas Pratama")).toBeTruthy();
+    expect(screen.getByText("BG-0214")).toBeTruthy();
+  });
+
+  it("lets a supervisor choose and save the employees on a shift", async () => {
+    const startsAt = new Date();
+    startsAt.setHours(9, 0, 0, 0);
+    const endsAt = new Date(startsAt);
+    endsAt.setHours(17, 0, 0, 0);
+    (api.me as jest.Mock).mockResolvedValue({
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      roles: ["SUPERVISOR"],
+    });
+    (api.supervisorShifts as jest.Mock).mockResolvedValue([
+      {
+        id: "team-shift",
+        title: "Layanan Pelanggan",
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        status: "PUBLISHED",
+        section: { id: "section-1", name: "BG GOLD Flagship" },
+        participants: [],
+      },
+    ]);
+    (api.employees as jest.Mock).mockResolvedValue([
+      {
+        id: "employee-dimas",
+        fullName: "Dimas Pratama",
+        email: "dimas@bggold.test",
+        employeeNumber: "BG-0214",
+        jobTitle: "Retail Associate",
+        status: "ACTIVE",
+        roles: ["EMPLOYEE"],
+      },
+    ]);
+    (api.openShifts as jest.Mock).mockResolvedValue([]);
+    (api.updateShiftParticipants as jest.Mock).mockResolvedValue({
+      id: "team-shift",
+      membershipIds: ["employee-dimas"],
+    });
+
+    await render(<ScheduleScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", {
+        name: "Lihat detail jadwal Layanan Pelanggan",
+      }),
+    );
+    await fireEvent.press(
+      screen.getByRole("checkbox", {
+        name: "Tambahkan Dimas Pratama dari shift",
+      }),
+    );
+    await fireEvent.press(screen.getByText("Simpan peserta jadwal"));
+
+    await waitFor(() =>
+      expect(api.updateShiftParticipants).toHaveBeenCalledWith(
+        "schedule-test-token",
+        "team-shift",
+        ["employee-dimas"],
+      ),
+    );
+    expect(await screen.findByText("Peserta shift berhasil diperbarui.")).toBeTruthy();
+  });
+
+  it("creates a custom calendar event with a supervisor-entered showroom", async () => {
+    (api.me as jest.Mock).mockResolvedValue({
+      timezone: "Asia/Jakarta",
+      roles: ["SUPERVISOR"],
+    });
+    (api.supervisorShifts as jest.Mock).mockResolvedValue([]);
+    (api.openShifts as jest.Mock).mockResolvedValue([]);
+    (api.employees as jest.Mock).mockResolvedValue([
+      {
+        id: "employee-ayu",
+        fullName: "Ayu Pratama",
+        email: "ayu@bggold.test",
+        employeeNumber: "BG-017",
+        status: "ACTIVE",
+        roles: ["EMPLOYEE"],
+      },
+    ]);
+    (api.sections as jest.Mock).mockResolvedValue([
+      {
+        id: "section-jakarta",
+        code: "JKT",
+        name: "Area Jakarta",
+        status: "ACTIVE",
+      },
+    ]);
+    (api.createShift as jest.Mock).mockResolvedValue({ id: "event-custom-1" });
+
+    await render(<ScheduleScreen />);
+    const addButton = await screen.findByRole("button", {
+      name: /Tambah event pada/,
+    });
+    await fireEvent.press(addButton);
+    await fireEvent.changeText(
+      screen.getByLabelText("Nama event custom"),
+      "Private Preview Aurum",
+    );
+    await fireEvent.changeText(
+      screen.getByLabelText("Nama showroom event"),
+      "Showroom BG GOLD Senayan",
+    );
+    await fireEvent.press(
+      screen.getByRole("checkbox", {
+        name: "Pilih Ayu Pratama untuk event",
+      }),
+    );
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Terbitkan event custom" }),
+    );
+
+    await waitFor(() =>
+      expect(api.createShift).toHaveBeenCalledWith(
+        "schedule-test-token",
+        expect.objectContaining({
+          sectionId: "section-jakarta",
+          title: "Private Preview Aurum",
+          scheduleType: "EVENT",
+          showroomName: "Showroom BG GOLD Senayan",
+          publish: true,
+          open: false,
+          membershipIds: ["employee-ayu"],
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText(
+        "Private Preview Aurum ditambahkan di Showroom BG GOLD Senayan untuk 1 karyawan.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("guides a supervisor through the schedule and custom-event flow", async () => {
+    (api.me as jest.Mock).mockResolvedValue({
+      timezone: "Asia/Jakarta",
+      roles: ["SUPERVISOR"],
+    });
+    (api.supervisorShifts as jest.Mock).mockResolvedValue([]);
+    (api.openShifts as jest.Mock).mockResolvedValue([]);
+    (api.employees as jest.Mock).mockResolvedValue([]);
+    (api.sections as jest.Mock).mockResolvedValue([]);
+
+    await render(<ScheduleScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", { name: "Buka tutorial jadwal" }),
+    );
+
+    expect(screen.getByText("LANGKAH 1 / 4")).toBeTruthy();
+    expect(screen.getByText("Pilih cara melihat jadwal")).toBeTruthy();
+
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Lanjutkan tutorial" }),
+    );
+    expect(screen.getByText("Berpindah tanggal dan periode")).toBeTruthy();
+
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Lanjutkan tutorial" }),
+    );
+    expect(screen.getByText("Tambahkan event custom")).toBeTruthy();
+    expect(
+      screen.getByText(/mengisi nama event, showroom, jam, dan karyawan/),
+    ).toBeTruthy();
+
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Lanjutkan tutorial" }),
+    );
+    expect(screen.getByText("Buka dan atur peserta")).toBeTruthy();
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Selesaikan tutorial" }),
+    );
+    expect(screen.queryByText("Buka dan atur peserta")).toBeNull();
+  });
+
+  it("lets an employee skip the schedule tutorial", async () => {
+    (api.shifts as jest.Mock).mockResolvedValue([]);
+    (api.openShifts as jest.Mock).mockResolvedValue([]);
+
+    await render(<ScheduleScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", { name: "Buka tutorial jadwal" }),
+    );
+    expect(screen.getByText("LANGKAH 1 / 3")).toBeTruthy();
+    await fireEvent.press(
+      screen.getByRole("button", { name: "Lewati tutorial" }),
+    );
+    expect(screen.queryByText("Pilih cara melihat jadwal")).toBeNull();
   });
 
   it("requests an available open shift and shows its pending state", async () => {

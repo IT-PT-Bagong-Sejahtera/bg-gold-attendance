@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "../components/Screen";
+import { TutorialLauncher } from "../components/GuidedTutorial";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DemoRole } from "../lib/demoSession";
@@ -151,6 +152,8 @@ export function LoginScreen() {
     return submitReset();
   }
 
+  const loginIntroRef = useRef<View>(null);
+  const loginChoicesRef = useRef<View>(null);
   return (
     <Screen>
       <KeyboardAvoidingView
@@ -162,232 +165,272 @@ export function LoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-        <View style={styles.brand}>
-          <Image
-            source={require("../../assets/bg-gold-logo.png")}
-            resizeMode="contain"
-            style={styles.logo}
-          />
-          <Text style={styles.product}>Attendance</Text>
-        </View>
-        <View style={styles.intro}>
-          <Text style={styles.eyebrow}>RUANG KERJA BG GOLD</Text>
-          <Text style={styles.title}>
-            {mode === "login"
-              ? "Mulai hari kerja dengan jelas."
-              : mode === "forgot"
-                ? "Pulihkan akses Anda."
-                : "Buat kata sandi baru."}
-          </Text>
-          <Text style={styles.copy}>
-            {mode === "login"
-              ? "Masuk untuk melihat jadwal dan mencatat kehadiran Anda."
-              : mode === "forgot"
-                ? "Masukkan email akun. Kami akan mengirim petunjuk bila akun ditemukan."
-                : "Gunakan token dari petunjuk reset dan pilih kata sandi minimal 12 karakter."}
-          </Text>
-        </View>
-        <View style={styles.form}>
-          {mode !== "reset" ? (
-            <>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                accessibilityLabel="Email"
-                autoCapitalize="none"
-                autoComplete="email"
-                keyboardType="email-address"
-                value={email}
-                onChangeText={setEmail}
-                style={styles.input}
-              />
-            </>
-          ) : (
-            <>
-              <Text style={styles.label}>Token reset</Text>
-              <TextInput
-                accessibilityLabel="Token reset"
-                autoCapitalize="none"
-                value={resetToken}
-                onChangeText={setResetToken}
-                style={styles.input}
-              />
-            </>
-          )}
-          {mode !== "forgot" ? (
-            <>
-              <Text style={styles.label}>
-                {mode === "login" ? "Kata sandi" : "Kata sandi baru"}
-              </Text>
-              <TextInput
-                accessibilityLabel={
-                  mode === "login" ? "Kata sandi" : "Kata sandi baru"
-                }
-                autoComplete={
-                  mode === "login" ? "current-password" : "new-password"
-                }
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-                style={styles.input}
-              />
-            </>
-          ) : null}
-          {mode === "reset" ? (
-            <>
-              <Text style={styles.label}>Ulangi kata sandi baru</Text>
-              <TextInput
-                accessibilityLabel="Ulangi kata sandi baru"
-                autoComplete="new-password"
-                secureTextEntry
-                value={confirmation}
-                onChangeText={setConfirmation}
-                style={styles.input}
-              />
-            </>
-          ) : null}
-          {message ? <Text style={styles.success}>{message}</Text> : null}
-          {error ? (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error}
+          <View ref={loginIntroRef} collapsable={false} style={styles.brand}>
+            <Image
+              source={require("../../assets/bg-gold-logo.png")}
+              resizeMode="contain"
+              style={styles.logo}
+            />
+            <Text style={styles.product}>Attendance</Text>
+          </View>
+          <View style={styles.intro}>
+            <Text style={styles.eyebrow}>RUANG KERJA BG GOLD</Text>
+            <Text style={styles.title}>
+              {mode === "login"
+                ? "Mulai hari kerja dengan jelas."
+                : mode === "forgot"
+                  ? "Pulihkan akses Anda."
+                  : "Buat kata sandi baru."}
             </Text>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={submitDisabled}
-            onPress={() => void submit()}
-            style={({ pressed }) => [
-              styles.button,
-              pressed && styles.pressed,
-              submitDisabled && styles.disabled,
-            ]}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.white} />
+            <Text style={styles.copy}>
+              {mode === "login"
+                ? "Masuk untuk melihat jadwal dan mencatat kehadiran Anda."
+                : mode === "forgot"
+                  ? "Masukkan email akun. Kami akan mengirim petunjuk bila akun ditemukan."
+                  : "Gunakan token dari petunjuk reset dan pilih kata sandi minimal 12 karakter."}
+            </Text>
+          </View>
+          <View ref={loginChoicesRef} collapsable={false} style={styles.form}>
+            {mode !== "reset" ? (
+              <>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  accessibilityLabel="Email"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                  style={styles.input}
+                />
+              </>
             ) : (
-              <Text style={styles.buttonText}>
-                {mode === "login"
-                  ? "Masuk"
-                  : mode === "forgot"
-                    ? "Kirim petunjuk"
-                    : "Perbarui kata sandi"}
-              </Text>
+              <>
+                <Text style={styles.label}>Token reset</Text>
+                <TextInput
+                  accessibilityLabel="Token reset"
+                  autoCapitalize="none"
+                  value={resetToken}
+                  onChangeText={setResetToken}
+                  style={styles.input}
+                />
+              </>
             )}
-          </Pressable>
-          {mode === "login" ? (
-            <>
-              <View style={styles.demoDivider}>
-                <View style={styles.demoRule} />
-                <Text style={styles.demoOr}>ATAU</Text>
-                <View style={styles.demoRule} />
-              </View>
-              <View style={styles.demoIntro}>
-                <Text style={styles.demoHeading}>PILIH PERAN DEMO</Text>
-                <Text style={styles.demoIntroText}>
-                  Setiap peran memakai data contoh lokal yang aman untuk dicoba.
+            {mode !== "forgot" ? (
+              <>
+                <Text style={styles.label}>
+                  {mode === "login" ? "Kata sandi" : "Kata sandi baru"}
                 </Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Coba demo tanpa server"
-                accessibilityHint="Membuka contoh aplikasi untuk karyawan yang tersimpan hanya di perangkat"
-                disabled={loading}
-                onPress={() => void startDemo("employee")}
-                style={({ pressed }) => [
-                  styles.demoButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.demoIcon}>
-                  <Ionicons name="sparkles-outline" size={20} color={colors.gold} />
+                <TextInput
+                  accessibilityLabel={
+                    mode === "login" ? "Kata sandi" : "Kata sandi baru"
+                  }
+                  autoComplete={
+                    mode === "login" ? "current-password" : "new-password"
+                  }
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                  style={styles.input}
+                />
+              </>
+            ) : null}
+            {mode === "reset" ? (
+              <>
+                <Text style={styles.label}>Ulangi kata sandi baru</Text>
+                <TextInput
+                  accessibilityLabel="Ulangi kata sandi baru"
+                  autoComplete="new-password"
+                  secureTextEntry
+                  value={confirmation}
+                  onChangeText={setConfirmation}
+                  style={styles.input}
+                />
+              </>
+            ) : null}
+            {message ? <Text style={styles.success}>{message}</Text> : null}
+            {error ? (
+              <Text accessibilityRole="alert" style={styles.error}>
+                {error}
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={submitDisabled}
+              onPress={() => void submit()}
+              style={({ pressed }) => [
+                styles.button,
+                pressed && styles.pressed,
+                submitDisabled && styles.disabled,
+              ]}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.white} />
+              ) : (
+                <Text style={styles.buttonText}>
+                  {mode === "login"
+                    ? "Masuk"
+                    : mode === "forgot"
+                      ? "Kirim petunjuk"
+                      : "Perbarui kata sandi"}
+                </Text>
+              )}
+            </Pressable>
+            {mode === "login" ? (
+              <>
+                <View style={styles.demoDivider}>
+                  <View style={styles.demoRule} />
+                  <Text style={styles.demoOr}>ATAU</Text>
+                  <View style={styles.demoRule} />
                 </View>
-                <View style={styles.demoCopy}>
-                  <Text style={styles.demoButtonText}>Demo karyawan</Text>
-                  <Text style={styles.demoCaption}>
-                    Absensi, jadwal, cuti, dan klaim
+                <View style={styles.demoIntro}>
+                  <Text style={styles.demoHeading}>PILIH PERAN DEMO</Text>
+                  <Text style={styles.demoIntroText}>
+                    Setiap peran memakai data contoh lokal yang aman untuk
+                    dicoba.
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={19} color={colors.espresso} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Coba demo supervisor tanpa server"
-                accessibilityHint="Membuka contoh antrean persetujuan supervisor yang tersimpan hanya di perangkat"
-                disabled={loading}
-                onPress={() => void startDemo("supervisor")}
-                style={({ pressed }) => [
-                  styles.demoButton,
-                  styles.supervisorDemoButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={[styles.demoIcon, styles.supervisorDemoIcon]}>
-                  <Ionicons name="checkmark-done-outline" size={20} color={colors.goldSoft} />
-                </View>
-                <View style={styles.demoCopy}>
-                  <Text style={styles.demoButtonText}>Demo supervisor</Text>
-                  <Text style={styles.demoCaption}>
-                    Persetujuan absensi, cuti, klaim, dan shift
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={19} color={colors.espresso} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Coba Demo 2 satu HP"
-                accessibilityHint="Membuka absensi sekali sehari dengan foto dan nama pada satu perangkat"
-                disabled={loading}
-                onPress={() => void startDemo("device")}
-                style={({ pressed }) => [
-                  styles.demoButton,
-                  styles.deviceDemoButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={[styles.demoIcon, styles.deviceDemoIcon]}>
-                  <Ionicons name="phone-portrait-outline" size={20} color={colors.white} />
-                </View>
-                <View style={styles.demoCopy}>
-                  <View style={styles.demoTitleRow}>
-                    <Text style={styles.demoButtonText}>Demo 2 · Satu HP</Text>
-                    <Text style={styles.demoBadge}>BARU</Text>
-                  </View>
-                  <Text style={styles.demoCaption}>
-                    Satu kali per hari · cukup foto dan nama
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={19} color={colors.espresso} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => changeMode("forgot")}
-                style={styles.secondaryAction}
-              >
-                <Text style={styles.secondaryText}>Lupa kata sandi?</Text>
-              </Pressable>
-            </>
-          ) : (
-            <View style={styles.secondaryRow}>
-              {mode === "forgot" && message ? (
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => changeMode("reset")}
+                  accessibilityLabel="Coba demo tanpa server"
+                  accessibilityHint="Membuka contoh aplikasi untuk karyawan yang tersimpan hanya di perangkat"
+                  disabled={loading}
+                  onPress={() => void startDemo("employee")}
+                  style={({ pressed }) => [
+                    styles.demoButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.demoIcon}>
+                    <Ionicons
+                      name="sparkles-outline"
+                      size={20}
+                      color={colors.gold}
+                    />
+                  </View>
+                  <View style={styles.demoCopy}>
+                    <Text style={styles.demoButtonText}>Demo karyawan</Text>
+                    <Text style={styles.demoCaption}>
+                      Absensi, jadwal, cuti, dan klaim
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={19}
+                    color={colors.espresso}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Coba demo supervisor tanpa server"
+                  accessibilityHint="Membuka contoh antrean persetujuan supervisor yang tersimpan hanya di perangkat"
+                  disabled={loading}
+                  onPress={() => void startDemo("supervisor")}
+                  style={({ pressed }) => [
+                    styles.demoButton,
+                    styles.supervisorDemoButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.demoIcon, styles.supervisorDemoIcon]}>
+                    <Ionicons
+                      name="checkmark-done-outline"
+                      size={20}
+                      color={colors.goldSoft}
+                    />
+                  </View>
+                  <View style={styles.demoCopy}>
+                    <Text style={styles.demoButtonText}>Demo supervisor</Text>
+                    <Text style={styles.demoCaption}>
+                      Persetujuan absensi, cuti, klaim, dan shift
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={19}
+                    color={colors.espresso}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Masuk demo showroom satu HP"
+                  accessibilityHint="Membuka setup satu HP kiosk untuk absensi di showroom"
+                  disabled={loading}
+                  onPress={() => void startDemo("device")}
+                  style={({ pressed }) => [
+                    styles.demoButton,
+                    styles.deviceDemoButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.demoIcon, styles.deviceDemoIcon]}>
+                    <Ionicons
+                      name="phone-portrait-outline"
+                      size={20}
+                      color={colors.white}
+                    />
+                  </View>
+                  <View style={styles.demoCopy}>
+                    <View style={styles.demoTitleRow}>
+                      <Text style={styles.demoButtonText}>Showroom · 1 HP</Text>
+                      <Text style={styles.demoBadge}>BARU</Text>
+                    </View>
+                    <Text style={styles.demoCaption}>
+                      Setup kiosk showroom · foto, nama, dan lokasi
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={19}
+                    color={colors.espresso}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => changeMode("forgot")}
                   style={styles.secondaryAction}
                 >
-                  <Text style={styles.secondaryText}>Saya punya token</Text>
+                  <Text style={styles.secondaryText}>Lupa kata sandi?</Text>
                 </Pressable>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => changeMode("login")}
-                style={styles.secondaryAction}
-              >
-                <Text style={styles.secondaryText}>Kembali ke login</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
+              </>
+            ) : (
+              <View style={styles.secondaryRow}>
+                {mode === "forgot" && message ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => changeMode("reset")}
+                    style={styles.secondaryAction}
+                  >
+                    <Text style={styles.secondaryText}>Saya punya token</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => changeMode("login")}
+                  style={styles.secondaryAction}
+                >
+                  <Text style={styles.secondaryText}>Kembali ke login</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      <TutorialLauncher
+        accessibilityLabel="Buka tutorial Login"
+        steps={[
+          {
+            target: loginIntroRef,
+            title: "Selamat datang di Absen BG",
+            body: "Gunakan akun yang telah dibuat supervisor atau superadmin untuk masuk ke ruang kerja organisasi Anda.",
+          },
+          {
+            target: loginChoicesRef,
+            title: "Masuk atau coba mode demo",
+            body: "Isi email dan kata sandi lalu ketuk Masuk. Untuk mencoba tanpa server, pilih Demo karyawan, Demo supervisor, atau mode Showroom satu HP.",
+          },
+        ]}
+      />
     </Screen>
   );
 }
@@ -525,7 +568,12 @@ const styles = StyleSheet.create({
   },
   demoCopy: { flex: 1, minWidth: 0 },
   demoButtonText: { color: colors.espresso, fontWeight: "700", fontSize: 15 },
-  demoCaption: { color: colors.inkMuted, fontSize: 11, lineHeight: 16, marginTop: 3 },
+  demoCaption: {
+    color: colors.inkMuted,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 3,
+  },
   supervisorDemoButton: { borderColor: colors.espresso },
   supervisorDemoIcon: { backgroundColor: colors.espresso },
   deviceDemoButton: {

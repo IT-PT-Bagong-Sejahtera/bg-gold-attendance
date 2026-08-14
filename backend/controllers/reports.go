@@ -13,17 +13,19 @@ import (
 )
 
 type supervisorAttendanceReportRow struct {
-	MembershipID   string     `json:"membershipId"`
-	EmployeeName   string     `json:"employeeName"`
-	EmployeeNumber string     `json:"employeeNumber"`
-	SectionName    string     `json:"sectionName"`
-	ShiftTitle     string     `json:"shiftTitle"`
-	ShiftStartsAt  time.Time  `json:"shiftStartsAt"`
-	ShiftEndsAt    time.Time  `json:"shiftEndsAt"`
-	ClockInAt      *time.Time `json:"clockInAt,omitempty"`
-	ClockOutAt     *time.Time `json:"clockOutAt,omitempty"`
-	WorkMinutes    int        `json:"workMinutes"`
-	Status         string     `json:"status"`
+	MembershipID    string     `json:"membershipId"`
+	EmployeeName    string     `json:"employeeName"`
+	EmployeeNumber  string     `json:"employeeNumber"`
+	SectionName     string     `json:"sectionName"`
+	ShiftTitle      string     `json:"shiftTitle"`
+	ShiftStartsAt   time.Time  `json:"shiftStartsAt"`
+	ShiftEndsAt     time.Time  `json:"shiftEndsAt"`
+	ClockInAt       *time.Time `json:"clockInAt,omitempty"`
+	ClockOutAt      *time.Time `json:"clockOutAt,omitempty"`
+	ClockInEventID  *string    `json:"clockInEventId,omitempty"`
+	ClockOutEventID *string    `json:"clockOutEventId,omitempty"`
+	WorkMinutes     int        `json:"workMinutes"`
+	Status          string     `json:"status"`
 }
 
 func (s *Server) supervisorAttendanceReport(w http.ResponseWriter, r *http.Request) {
@@ -53,11 +55,13 @@ func (s *Server) supervisorAttendanceReport(w http.ResponseWriter, r *http.Reque
 		SELECT BIN_TO_UUID(m.id),u.full_name,m.employee_number,COALESCE(sec.name,'Tanpa lokasi'),COALESCE(sh.title,'Tanpa shift'),
 		       COALESCE(sh.starts_at,?),COALESCE(sh.ends_at,?),
 		       MIN(CASE WHEN e.action_type='CLOCK_IN' AND e.decision='APPROVED' THEN e.server_recorded_at END),
-		       MAX(CASE WHEN e.action_type IN ('CLOCK_OUT','AUTO_CLOCK_OUT') AND e.decision='APPROVED' THEN e.server_recorded_at END)
+		       MAX(CASE WHEN e.action_type IN ('CLOCK_OUT','AUTO_CLOCK_OUT') AND e.decision='APPROVED' THEN e.server_recorded_at END),
+		       SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN e.action_type='CLOCK_IN' AND e.decision='APPROVED' THEN BIN_TO_UUID(e.id) END ORDER BY e.server_recorded_at ASC),',',1),
+		       SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN e.action_type IN ('CLOCK_OUT','AUTO_CLOCK_OUT') AND e.decision='APPROVED' THEN BIN_TO_UUID(e.id) END ORDER BY e.server_recorded_at DESC),',',1)
 		FROM organization_memberships m
 		JOIN users u ON u.id=m.user_id
 		LEFT JOIN shift_assignments sa ON sa.membership_id=m.id AND sa.status<>'CANCELLED'
-		LEFT JOIN shifts sh ON sh.id=sa.shift_id AND sh.status='PUBLISHED' AND sh.starts_at<? AND sh.ends_at>?
+		LEFT JOIN shifts sh ON sh.id=sa.shift_id AND sh.status='PUBLISHED' AND sh.schedule_type='SHIFT' AND sh.starts_at<? AND sh.ends_at>?
 		LEFT JOIN sections sec ON sec.id=sh.section_id
 		LEFT JOIN attendance_events e ON e.membership_id=m.id AND e.server_recorded_at>=? AND e.server_recorded_at<?
 		WHERE m.organization_id=UUID_TO_BIN(?) AND m.status='ACTIVE'
@@ -72,7 +76,8 @@ func (s *Server) supervisorAttendanceReport(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var item supervisorAttendanceReportRow
 		var clockIn, clockOut sql.NullTime
-		if err := rows.Scan(&item.MembershipID, &item.EmployeeName, &item.EmployeeNumber, &item.SectionName, &item.ShiftTitle, &item.ShiftStartsAt, &item.ShiftEndsAt, &clockIn, &clockOut); err != nil {
+		var clockInEventID, clockOutEventID sql.NullString
+		if err := rows.Scan(&item.MembershipID, &item.EmployeeName, &item.EmployeeNumber, &item.SectionName, &item.ShiftTitle, &item.ShiftStartsAt, &item.ShiftEndsAt, &clockIn, &clockOut, &clockInEventID, &clockOutEventID); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -91,6 +96,12 @@ func (s *Server) supervisorAttendanceReport(w http.ResponseWriter, r *http.Reque
 			} else {
 				item.Status = "WORKING"
 			}
+		}
+		if clockInEventID.Valid {
+			item.ClockInEventID = &clockInEventID.String
+		}
+		if clockOutEventID.Valid {
+			item.ClockOutEventID = &clockOutEventID.String
 		}
 		items = append(items, item)
 	}

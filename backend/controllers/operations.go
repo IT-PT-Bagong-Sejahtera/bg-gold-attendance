@@ -41,13 +41,15 @@ type sectionItem struct {
 }
 
 type shiftItem struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
-	RoleName *string   `json:"roleName"`
-	StartsAt time.Time `json:"startsAt"`
-	EndsAt   time.Time `json:"endsAt"`
-	Status   string    `json:"status"`
-	Section  struct {
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	ScheduleType string    `json:"scheduleType"`
+	RoleName     *string   `json:"roleName"`
+	ShowroomName *string   `json:"showroomName,omitempty"`
+	StartsAt     time.Time `json:"startsAt"`
+	EndsAt       time.Time `json:"endsAt"`
+	Status       string    `json:"status"`
+	Section      struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"section"`
@@ -1015,7 +1017,7 @@ func operationRange(w http.ResponseWriter, r *http.Request) (time.Time, time.Tim
 }
 
 func (s *Server) queryShifts(r *http.Request, orgID, membershipID string, from, to time.Time) ([]shiftItem, error) {
-	query := `SELECT BIN_TO_UUID(s.id),s.title,s.role_name,s.starts_at,s.ends_at,s.status,BIN_TO_UUID(sec.id),sec.name FROM shifts s JOIN sections sec ON sec.id=s.section_id`
+	query := `SELECT BIN_TO_UUID(s.id),s.title,s.schedule_type,s.role_name,s.showroom_name,s.starts_at,s.ends_at,s.status,BIN_TO_UUID(sec.id),sec.name FROM shifts s JOIN sections sec ON sec.id=s.section_id`
 	args := []any{orgID, to.UTC(), from.UTC()}
 	if membershipID != "" {
 		query += ` JOIN shift_assignments sa ON sa.shift_id=s.id AND sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED'`
@@ -1034,12 +1036,15 @@ func (s *Server) queryShifts(r *http.Request, orgID, membershipID string, from, 
 	items := []shiftItem{}
 	for rows.Next() {
 		var v shiftItem
-		var role sql.NullString
-		if err := rows.Scan(&v.ID, &v.Title, &role, &v.StartsAt, &v.EndsAt, &v.Status, &v.Section.ID, &v.Section.Name); err != nil {
+		var role, showroom sql.NullString
+		if err := rows.Scan(&v.ID, &v.Title, &v.ScheduleType, &role, &showroom, &v.StartsAt, &v.EndsAt, &v.Status, &v.Section.ID, &v.Section.Name); err != nil {
 			return nil, err
 		}
 		if role.Valid {
 			v.RoleName = &role.String
+		}
+		if showroom.Valid {
+			v.ShowroomName = &showroom.String
 		}
 		items = append(items, v)
 	}
@@ -1049,14 +1054,12 @@ func (s *Server) queryShifts(r *http.Request, orgID, membershipID string, from, 
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if membershipID == "" {
-		for index := range items {
-			participants, err := s.queryShiftParticipants(r, orgID, items[index].ID)
-			if err != nil {
-				return nil, err
-			}
-			items[index].Participants = participants
+	for index := range items {
+		participants, err := s.queryShiftParticipants(r, orgID, items[index].ID)
+		if err != nil {
+			return nil, err
 		}
+		items[index].Participants = participants
 	}
 	return items, nil
 }
@@ -1066,7 +1069,9 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		SectionID     string    `json:"sectionId"`
 		Title         string    `json:"title"`
+		ScheduleType  string    `json:"scheduleType"`
 		RoleName      string    `json:"roleName"`
+		ShowroomName  string    `json:"showroomName"`
 		StartsAt      time.Time `json:"startsAt"`
 		EndsAt        time.Time `json:"endsAt"`
 		Publish       bool      `json:"publish"`
@@ -1074,6 +1079,19 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 		MembershipIDs []string  `json:"membershipIds"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	in.ScheduleType = strings.ToUpper(strings.TrimSpace(in.ScheduleType))
+	if in.ScheduleType == "" {
+		in.ScheduleType = "SHIFT"
+	}
+	in.ShowroomName = strings.TrimSpace(in.ShowroomName)
+	if in.ScheduleType != "SHIFT" && in.ScheduleType != "EVENT" {
+		writeValidation(w, r, "Jenis jadwal harus SHIFT atau EVENT.")
+		return
+	}
+	if in.ScheduleType == "EVENT" && in.ShowroomName == "" {
+		writeValidation(w, r, "Nama showroom wajib diisi untuk event custom.")
 		return
 	}
 	if strings.TrimSpace(in.SectionID) == "" || strings.TrimSpace(in.Title) == "" || !in.EndsAt.After(in.StartsAt) {
@@ -1093,7 +1111,7 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(r.Context(), `INSERT INTO shifts(id,organization_id,section_id,title,role_name,starts_at,ends_at,status,published_at,is_open,created_by) SELECT UUID_TO_BIN(?),UUID_TO_BIN(?),id,?,NULLIF(?,''),?,?,?,?,?,UUID_TO_BIN(?) FROM sections WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?)`, id, p.OrganizationID, in.Title, in.RoleName, in.StartsAt.UTC(), in.EndsAt.UTC(), status, published, in.Open, p.UserID, in.SectionID, p.OrganizationID)
+	result, err := tx.ExecContext(r.Context(), `INSERT INTO shifts(id,organization_id,section_id,title,schedule_type,role_name,showroom_name,starts_at,ends_at,status,published_at,is_open,created_by) SELECT UUID_TO_BIN(?),UUID_TO_BIN(?),id,?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,UUID_TO_BIN(?) FROM sections WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?)`, id, p.OrganizationID, in.Title, in.ScheduleType, in.RoleName, in.ShowroomName, in.StartsAt.UTC(), in.EndsAt.UTC(), status, published, in.Open && in.ScheduleType == "SHIFT", p.UserID, in.SectionID, p.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1110,9 +1128,9 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		assigned[membershipID] = true
-		if in.Publish {
+		if in.Publish && in.ScheduleType == "SHIFT" {
 			var conflicts int
-			if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts existing ON existing.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND existing.status='PUBLISHED' AND existing.starts_at<? AND existing.ends_at>?`, membershipID, in.EndsAt.UTC(), in.StartsAt.UTC()).Scan(&conflicts); err != nil {
+			if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts existing ON existing.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND existing.status='PUBLISHED' AND existing.schedule_type='SHIFT' AND existing.starts_at<? AND existing.ends_at>?`, membershipID, in.EndsAt.UTC(), in.StartsAt.UTC()).Scan(&conflicts); err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
@@ -1133,7 +1151,7 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = insertAudit(r.Context(), tx, p, "shift.create", "shift", id, map[string]any{"status": status, "open": in.Open}); err != nil {
+	if err = insertAudit(r.Context(), tx, p, "shift.create", "shift", id, map[string]any{"status": status, "open": in.Open && in.ScheduleType == "SHIFT", "scheduleType": in.ScheduleType}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1142,6 +1160,90 @@ func (s *Server) createShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"data": map[string]string{"id": id}, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) updateShiftParticipants(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	shiftID := strings.TrimSpace(chi.URLParam(r, "shiftID"))
+	var in struct {
+		MembershipIDs []string `json:"membershipIds"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+
+	desired := make([]string, 0, len(in.MembershipIDs))
+	seen := map[string]bool{}
+	for _, raw := range in.MembershipIDs {
+		membershipID := strings.TrimSpace(raw)
+		if membershipID != "" && !seen[membershipID] {
+			seen[membershipID] = true
+			desired = append(desired, membershipID)
+		}
+	}
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
+
+	var startsAt, endsAt time.Time
+	var status, scheduleType string
+	err = tx.QueryRowContext(r.Context(), `SELECT starts_at,ends_at,status,schedule_type FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, shiftID, p.OrganizationID).Scan(&startsAt, &endsAt, &status, &scheduleType)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "SHIFT_NOT_FOUND", Message: "Shift tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	for _, membershipID := range desired {
+		var active int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM organization_memberships WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='ACTIVE'`, membershipID, p.OrganizationID).Scan(&active); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if active == 0 {
+			writeValidation(w, r, "Karyawan shift tidak ditemukan atau sudah tidak aktif.")
+			return
+		}
+		if status == "PUBLISHED" && scheduleType == "SHIFT" {
+			var conflicts int
+			if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts existing ON existing.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.shift_id<>UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND existing.organization_id=UUID_TO_BIN(?) AND existing.status='PUBLISHED' AND existing.schedule_type='SHIFT' AND existing.starts_at<? AND existing.ends_at>?`, membershipID, shiftID, p.OrganizationID, endsAt, startsAt).Scan(&conflicts); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			if conflicts > 0 {
+				httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SHIFT_CONFLICT", Message: "Salah satu karyawan memiliki shift lain yang bertumpang tindih."})
+				return
+			}
+		}
+	}
+
+	if _, err = tx.ExecContext(r.Context(), `UPDATE shift_assignments SET status='CANCELLED',acknowledged_at=NULL WHERE shift_id=UUID_TO_BIN(?)`, shiftID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	for _, membershipID := range desired {
+		assignmentID, _ := identity.NewUUID()
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO shift_assignments(id,shift_id,membership_id,status) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),'ASSIGNED') ON DUPLICATE KEY UPDATE status='ASSIGNED',acknowledged_at=NULL`, assignmentID, shiftID, membershipID); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	if err = insertAudit(r.Context(), tx, p, "shift.participants.update", "shift", shiftID, map[string]any{"membershipIds": desired}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": shiftID, "membershipIds": desired}, "requestId": httpx.RequestID(r.Context())})
 }
 
 func (s *Server) publishShift(w http.ResponseWriter, r *http.Request) {
@@ -1162,7 +1264,8 @@ func (s *Server) changeShiftPublication(w http.ResponseWriter, r *http.Request, 
 	}
 	defer tx.Rollback()
 	var startsAt, endsAt time.Time
-	err = tx.QueryRowContext(r.Context(), `SELECT starts_at,ends_at FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, shiftID, p.OrganizationID).Scan(&startsAt, &endsAt)
+	var scheduleType string
+	err = tx.QueryRowContext(r.Context(), `SELECT starts_at,ends_at,schedule_type FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) FOR UPDATE`, shiftID, p.OrganizationID).Scan(&startsAt, &endsAt, &scheduleType)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "SHIFT_NOT_FOUND", Message: "Shift tidak ditemukan."})
 		return
@@ -1171,9 +1274,9 @@ func (s *Server) changeShiftPublication(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if publish {
+	if publish && scheduleType == "SHIFT" {
 		var conflicts int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments target JOIN shift_assignments other ON other.membership_id=target.membership_id AND other.shift_id<>target.shift_id AND other.status<>'CANCELLED' JOIN shifts existing ON existing.id=other.shift_id AND existing.status='PUBLISHED' WHERE target.shift_id=UUID_TO_BIN(?) AND target.status<>'CANCELLED' AND existing.starts_at<? AND existing.ends_at>?`, shiftID, endsAt, startsAt).Scan(&conflicts); err != nil {
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments target JOIN shift_assignments other ON other.membership_id=target.membership_id AND other.shift_id<>target.shift_id AND other.status<>'CANCELLED' JOIN shifts existing ON existing.id=other.shift_id AND existing.status='PUBLISHED' AND existing.schedule_type='SHIFT' WHERE target.shift_id=UUID_TO_BIN(?) AND target.status<>'CANCELLED' AND existing.starts_at<? AND existing.ends_at>?`, shiftID, endsAt, startsAt).Scan(&conflicts); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -1181,6 +1284,8 @@ func (s *Server) changeShiftPublication(w http.ResponseWriter, r *http.Request, 
 			httpx.WriteError(w, r, &httpx.Error{Status: http.StatusConflict, Code: "SHIFT_CONFLICT", Message: "Shift tidak dapat diterbitkan karena jadwal karyawan bertumpang tindih."})
 			return
 		}
+	}
+	if publish {
 		_, err = tx.ExecContext(r.Context(), `UPDATE shifts SET status='PUBLISHED',published_at=COALESCE(published_at,UTC_TIMESTAMP(6)),updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?)`, shiftID)
 	} else {
 		_, err = tx.ExecContext(r.Context(), `UPDATE shifts SET status='DRAFT',published_at=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=UUID_TO_BIN(?)`, shiftID)

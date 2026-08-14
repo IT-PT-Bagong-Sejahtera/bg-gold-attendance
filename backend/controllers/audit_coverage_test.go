@@ -34,6 +34,7 @@ func TestEveryMutationRouteHasAnAuditDisposition(t *testing.T) {
 		"PATCH /policies/{policyID}":                      "policy.update",
 		"POST /policies/{policyID}/archive":               "policy.archive",
 		"POST /shifts":                                    "shift.create",
+		"PATCH /shifts/{shiftID}/participants":            "shift.participants.update",
 		"POST /shifts/{shiftID}/publish":                  "shift.publish",
 		"POST /shifts/{shiftID}/unpublish":                "shift.unpublish",
 		"POST /shift-requests/{requestID}/decision":       "shift.request.decide",

@@ -18,6 +18,7 @@ jest.mock("../lib/api", () => ({
     shifts: jest.fn(),
     policy: jest.fn(),
     action: jest.fn(),
+    myAttendanceEvidence: jest.fn(),
   },
 }));
 
@@ -99,6 +100,16 @@ describe("scheduled break employee flow", () => {
       decision: "APPROVED",
       attendanceState: "ON_BREAK",
     });
+    (api.myAttendanceEvidence as jest.Mock).mockResolvedValue({
+      eventId: "event-detail",
+      actionType: "CLOCK_IN",
+      decision: "APPROVED",
+      source: "MOBILE",
+      recordedAt: "2026-08-11T01:00:00Z",
+      section: { id: "section-1", name: "BG GOLD Flagship" },
+      location: { latitude: -6.2, longitude: 106.8, accuracyM: 7 },
+      device: { id: "device-1", platform: "ANDROID", label: "Samsung Demo" },
+    });
     (flushAttendanceOutbox as jest.Mock).mockResolvedValue({
       sent: 0,
       pending: 0,
@@ -126,6 +137,33 @@ describe("scheduled break employee flow", () => {
     ).toBeTruthy();
     await fireEvent.press(screen.getByText("Mulai istirahat"));
     expect(submitAttendanceResilient).not.toHaveBeenCalled();
+  });
+
+  it("opens an employee's own attendance evidence from the history row", async () => {
+    jest.useRealTimers();
+    const event = {
+      id: "event-detail",
+      actionType: "CLOCK_IN",
+      decision: "APPROVED",
+      recordedAt: "2026-08-11T01:00:00Z",
+    };
+    (api.history as jest.Mock).mockResolvedValue([event]);
+    (api.policy as jest.Mock).mockResolvedValue(policy);
+
+    await render(<AttendanceScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", {
+        name: "Lihat detail absensi Clock in",
+      }),
+    );
+
+    expect(await screen.findByText("DETAIL ABSENSI ANDA")).toBeTruthy();
+    expect(screen.getByText("BG GOLD Flagship")).toBeTruthy();
+    expect(screen.getByText("Samsung Demo")).toBeTruthy();
+    expect(api.myAttendanceEvidence).toHaveBeenCalledWith(
+      "test-access-token",
+      "event-detail",
+    );
   });
 
   it("submits an in-window scheduled break without approval copy", async () => {
@@ -203,12 +241,13 @@ describe("scheduled break employee flow", () => {
       "Menuntaskan rekonsiliasi stok emas",
     );
     await waitFor(() =>
-      expect(screen.getByRole("button").props.accessibilityState.disabled).toBe(
-        false,
-      ),
+      expect(
+        screen.getByRole("button", { name: "Kerja tambahan" }).props
+          .accessibilityState.disabled,
+      ).toBe(false),
     );
     await act(async () => {
-      fireEvent.press(screen.getByRole("button"));
+      fireEvent.press(screen.getByRole("button", { name: "Kerja tambahan" }));
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -267,7 +306,7 @@ describe("scheduled break employee flow", () => {
       ),
     ).toBeTruthy();
     await act(async () => {
-      fireEvent.press(screen.getByRole("button"));
+      fireEvent.press(screen.getByRole("button", { name: "Mulai istirahat" }));
       await Promise.resolve();
       await Promise.resolve();
     });

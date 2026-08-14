@@ -164,6 +164,17 @@ paths:
       responses:
         "200": { description: Attendance event list with an optional top-level nextCursor }
         "400": { $ref: "#/components/responses/Error" }
+  /me/attendance/events/{eventId}/evidence:
+    get:
+      summary: Read evidence for an attendance event owned by the active employee
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Own event, location, device, verification, and five-minute private photo URL }
+        "404": { $ref: "#/components/responses/Error" }
   /me/requests:
     get:
       summary: List the active employee's attendance requests
@@ -267,6 +278,18 @@ paths:
       responses:
         "200": { description: Organization-scoped attendance record list }
         "403": { $ref: "#/components/responses/Error" }
+  /attendance/events/{eventId}/evidence:
+    get:
+      summary: Read organization-scoped attendance evidence with a five-minute private photo URL
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Attendance event, location, device, integrity, face-verification, and private attachment metadata }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /attendance/timesheets:
     get:
       summary: Compute organization timesheets using effective corrections and break rounding
@@ -759,6 +782,21 @@ paths:
       responses:
         "200": { description: Shift published }
         "409": { $ref: "#/components/responses/Error" }
+  /shifts/{shiftId}/participants:
+    patch:
+      summary: Replace the active participant list after organization and overlap validation
+      parameters:
+        - { in: path, name: shiftId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateShiftParticipants" }
+      responses:
+        "200": { description: Shift participants updated and audited }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /shifts/{shiftId}/unpublish:
     post:
       summary: Return a published shift to draft
@@ -1115,12 +1153,28 @@ components:
       properties:
         sectionId: { type: string, format: uuid }
         title: { type: string }
+        scheduleType:
+          enum: [SHIFT, EVENT]
+          default: SHIFT
+          description: EVENT appears in team calendars but is excluded from attendance shift resolution and overlap checks.
         roleName: { type: string }
+        showroomName:
+          type: string
+          maxLength: 180
+          description: Supervisor-entered showroom name; required when scheduleType is EVENT.
         startsAt: { type: string, format: date-time }
         endsAt: { type: string, format: date-time }
         publish: { type: boolean }
         open: { type: boolean }
         membershipIds: { type: array, items: { type: string, format: uuid } }
+    UpdateShiftParticipants:
+      type: object
+      required: [membershipIds]
+      properties:
+        membershipIds:
+          type: array
+          uniqueItems: true
+          items: { type: string, format: uuid }
     UpdateEmployee:
       type: object
       required: [fullName, employeeNumber, roles]

@@ -24,7 +24,7 @@ func (s *Server) myOpenShifts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT BIN_TO_UUID(sh.id),sh.title,sh.role_name,sh.starts_at,sh.ends_at,sh.status,BIN_TO_UUID(sec.id),sec.name,sr.status FROM shifts sh JOIN sections sec ON sec.id=sh.section_id LEFT JOIN shift_requests sr ON sr.shift_id=sh.id AND sr.membership_id=UUID_TO_BIN(?) LEFT JOIN shift_assignments sa ON sa.shift_id=sh.id AND sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' WHERE sh.organization_id=UUID_TO_BIN(?) AND sh.status='PUBLISHED' AND sh.is_open=TRUE AND sa.id IS NULL AND sh.starts_at<? AND sh.ends_at>? ORDER BY sh.starts_at`, p.MembershipID, p.MembershipID, p.OrganizationID, to.UTC(), from.UTC())
+	rows, err := s.db.QueryContext(r.Context(), `SELECT BIN_TO_UUID(sh.id),sh.title,sh.role_name,sh.starts_at,sh.ends_at,sh.status,BIN_TO_UUID(sec.id),sec.name,sr.status FROM shifts sh JOIN sections sec ON sec.id=sh.section_id LEFT JOIN shift_requests sr ON sr.shift_id=sh.id AND sr.membership_id=UUID_TO_BIN(?) LEFT JOIN shift_assignments sa ON sa.shift_id=sh.id AND sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' WHERE sh.organization_id=UUID_TO_BIN(?) AND sh.status='PUBLISHED' AND sh.schedule_type='SHIFT' AND sh.is_open=TRUE AND sa.id IS NULL AND sh.starts_at<? AND sh.ends_at>? ORDER BY sh.starts_at`, p.MembershipID, p.MembershipID, p.OrganizationID, to.UTC(), from.UTC())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -65,7 +65,7 @@ func (s *Server) requestOpenShift(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var available bool
-	if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='PUBLISHED' AND is_open=TRUE AND starts_at>UTC_TIMESTAMP(6))`, shiftID, p.OrganizationID).Scan(&available); err != nil {
+	if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM shifts WHERE id=UUID_TO_BIN(?) AND organization_id=UUID_TO_BIN(?) AND status='PUBLISHED' AND schedule_type='SHIFT' AND is_open=TRUE AND starts_at>UTC_TIMESTAMP(6))`, shiftID, p.OrganizationID).Scan(&available); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -154,7 +154,7 @@ func (s *Server) decideShiftRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Decision == "APPROVED" {
 		var conflicts int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts sh ON sh.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND sh.status='PUBLISHED' AND sh.starts_at<? AND sh.ends_at>?`, membershipID, ends, starts).Scan(&conflicts); err != nil {
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM shift_assignments sa JOIN shifts sh ON sh.id=sa.shift_id WHERE sa.membership_id=UUID_TO_BIN(?) AND sa.status<>'CANCELLED' AND sh.status='PUBLISHED' AND sh.schedule_type='SHIFT' AND sh.starts_at<? AND sh.ends_at>?`, membershipID, ends, starts).Scan(&conflicts); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}

@@ -5,6 +5,7 @@ import type {
   Announcement,
   AttendanceAction,
   AttendanceEvent,
+  AttendanceEvidenceDetail,
   AttendanceRequest,
   AttendanceState,
   Claim,
@@ -39,6 +40,18 @@ type DemoState = {
   deviceEmployeeName?: string;
   deviceId?: string;
   deviceBoundAt?: string;
+  demoAttachments: Record<
+    string,
+    { uri: string; contentType: string; sizeBytes: number }
+  >;
+  deviceEvidence: Record<
+    string,
+    {
+      employeeName: string;
+      employeeNumber: string;
+      detail: AttendanceEvidenceDetail;
+    }
+  >;
   leaveRequests: LeaveRequest[];
   claims: Claim[];
   openShiftRequested: boolean;
@@ -51,9 +64,13 @@ type DemoState = {
   supervisorShifts: SupervisorShift[];
 };
 
-export async function demoUploadAttachment(contentType: string) {
+export async function demoUploadAttachment(contentType: string, uri: string) {
+  const state = await readState();
+  const id = `demo-attachment-${Date.now()}`;
+  state.demoAttachments[id] = { uri, contentType, sizeBytes: 128_000 };
+  await writeState(state);
   return {
-    id: `demo-attachment-${Date.now()}`,
+    id,
     contentType,
     sizeBytes: 128_000,
   };
@@ -89,8 +106,15 @@ export async function demoRequest<T>(
   if (path === "/me/organizations") return clone(DEMO_ORGANIZATIONS) as T;
   if (path === "/employees" && method === "POST") {
     const requestedRoles = Array.isArray(input.roles) ? input.roles : [];
-    if (demoRole !== "supervisor" || requestedRoles.some((role) => role !== "EMPLOYEE")) {
-      throw new APIError(403, "ROLE_ASSIGNMENT_FORBIDDEN", "Supervisor hanya dapat membuat akun karyawan.");
+    if (
+      demoRole !== "supervisor" ||
+      requestedRoles.some((role) => role !== "EMPLOYEE")
+    ) {
+      throw new APIError(
+        403,
+        "ROLE_ASSIGNMENT_FORBIDDEN",
+        "Supervisor hanya dapat membuat akun karyawan.",
+      );
     }
     return {
       id: `demo-employee-${Date.now()}`,
@@ -108,12 +132,26 @@ export async function demoRequest<T>(
         : state.attendanceEvents,
     ) as T;
   }
+  if (
+    path.startsWith("/me/attendance/events/") &&
+    path.endsWith("/evidence") &&
+    method === "GET"
+  ) {
+    const eventId = path.split("/")[4] ?? "";
+    return clone(
+      state.deviceEvidence[eventId]?.detail ?? demoAttendanceEvidence(eventId),
+    ) as T;
+  }
   if (path === "/me/requests") return [] as T;
-  if (path === "/me/shifts") return assignedShifts() as T;
+  if (path === "/me/shifts") return assignedShifts(state, demoRole) as T;
   if (path === "/me/open-shifts") {
     return openShifts(state.openShiftRequested) as T;
   }
-  if (path.startsWith("/shifts/") && path.endsWith("/requests") && method === "POST") {
+  if (
+    path.startsWith("/shifts/") &&
+    path.endsWith("/requests") &&
+    method === "POST"
+  ) {
     state.openShiftRequested = true;
     await writeState(state);
     return { id: `demo-shift-request-${Date.now()}`, status: "PENDING" } as T;
@@ -140,7 +178,8 @@ export async function demoRequest<T>(
     return { id, status: "WITHDRAWN" } as T;
   }
   if (path === "/claim-types") return clone(DEMO_CLAIM_TYPES) as T;
-  if (path === "/me/claims" && method === "GET") return clone(state.claims) as T;
+  if (path === "/me/claims" && method === "GET")
+    return clone(state.claims) as T;
   if (path === "/me/claims" && method === "POST") {
     return (await createClaim(state, input)) as T;
   }
@@ -154,13 +193,21 @@ export async function demoRequest<T>(
   if (path === "/me/announcements") return announcements(state) as T;
   if (path.startsWith("/me/announcements/") && path.endsWith("/receipt")) {
     state.announcementAcknowledged = true;
-    state.notifications = state.notifications.map((item) => ({ ...item, read: true }));
+    state.notifications = state.notifications.map((item) => ({
+      ...item,
+      read: true,
+    }));
     await writeState(state);
-    return { id: path.split("/")[3], action: input.action ?? "ACKNOWLEDGE" } as T;
+    return {
+      id: path.split("/")[3],
+      action: input.action ?? "ACKNOWLEDGE",
+    } as T;
   }
   if (path === "/me/notifications") return clone(state.notifications) as T;
   if (path === "/me/notifications/unread-count") {
-    return { count: state.notifications.filter((item) => !item.read).length } as T;
+    return {
+      count: state.notifications.filter((item) => !item.read).length,
+    } as T;
   }
   if (path.includes("/me/notifications/") && path.endsWith("/read")) {
     const id = path.split("/")[3];
@@ -192,7 +239,17 @@ export async function demoRequest<T>(
     ) as T;
   }
   if (path === "/attendance/report" && method === "GET") {
-    return supervisorAttendanceReport() as T;
+    return supervisorAttendanceReport(state) as T;
+  }
+  if (
+    path.startsWith("/attendance/events/") &&
+    path.endsWith("/evidence") &&
+    method === "GET"
+  ) {
+    const eventId = path.split("/")[3] ?? "";
+    return clone(
+      state.deviceEvidence[eventId]?.detail ?? demoAttendanceEvidence(eventId),
+    ) as T;
   }
   if (
     path.startsWith("/attendance/requests/") &&
@@ -263,8 +320,10 @@ export async function demoRequest<T>(
   }
   if (path === "/shifts" && method === "POST") {
     const section = DEMO_SECTIONS.find((item) => item.id === input.sectionId);
-    const participants = DEMO_EMPLOYEES.filter((item) =>
-      Array.isArray(input.membershipIds) && input.membershipIds.includes(item.id),
+    const participants = DEMO_EMPLOYEES.filter(
+      (item) =>
+        Array.isArray(input.membershipIds) &&
+        input.membershipIds.includes(item.id),
     ).map((item) => ({
       membershipId: item.id,
       employeeName: item.fullName,
@@ -273,7 +332,9 @@ export async function demoRequest<T>(
     const shift: SupervisorShift = {
       id: `demo-supervisor-shift-${Date.now()}`,
       title: String(input.title),
+      scheduleType: input.scheduleType === "EVENT" ? "EVENT" : "SHIFT",
       roleName: input.roleName ? String(input.roleName) : undefined,
+      showroomName: input.showroomName ? String(input.showroomName) : undefined,
       startsAt: String(input.startsAt),
       endsAt: String(input.endsAt),
       status: input.publish === false ? "DRAFT" : "PUBLISHED",
@@ -286,6 +347,29 @@ export async function demoRequest<T>(
     state.supervisorShifts.unshift(shift);
     await writeState(state);
     return { id: shift.id } as T;
+  }
+  if (
+    path.startsWith("/shifts/") &&
+    path.endsWith("/participants") &&
+    method === "PATCH"
+  ) {
+    const shiftId = path.split("/")[2] ?? "";
+    const shift = state.supervisorShifts.find((item) => item.id === shiftId);
+    if (!shift) {
+      throw new APIError(404, "SHIFT_NOT_FOUND", "Shift tidak ditemukan.");
+    }
+    const membershipIds = Array.isArray(input.membershipIds)
+      ? [...new Set(input.membershipIds.map(String))]
+      : [];
+    shift.participants = DEMO_EMPLOYEES.filter((item) =>
+      membershipIds.includes(item.id),
+    ).map((item) => ({
+      membershipId: item.id,
+      employeeName: item.fullName,
+      employeeNumber: item.employeeNumber,
+    }));
+    await writeState(state);
+    return { id: shift.id, membershipIds } as T;
   }
 
   throw new Error(`Fitur demo lokal belum tersedia untuk ${method} ${path}.`);
@@ -366,27 +450,112 @@ const DEMO_DEVICE_POLICY: Policy = {
 };
 
 const DEMO_LEAVE_TYPES: LeaveType[] = [
-  { id: "demo-annual", code: "ANNUAL", name: "Cuti Tahunan", paid: true, status: "ACTIVE" },
-  { id: "demo-sick", code: "SICK", name: "Cuti Sakit", paid: true, status: "ACTIVE" },
+  {
+    id: "demo-annual",
+    code: "ANNUAL",
+    name: "Cuti Tahunan",
+    paid: true,
+    status: "ACTIVE",
+  },
+  {
+    id: "demo-sick",
+    code: "SICK",
+    name: "Cuti Sakit",
+    paid: true,
+    status: "ACTIVE",
+  },
 ];
 
 const DEMO_CLAIM_TYPES: ClaimType[] = [
-  { id: "demo-transport", code: "TRANSPORT", name: "Transportasi", receiptRequired: false, status: "ACTIVE" },
-  { id: "demo-meal", code: "MEAL", name: "Konsumsi", receiptRequired: true, status: "ACTIVE" },
+  {
+    id: "demo-transport",
+    code: "TRANSPORT",
+    name: "Transportasi",
+    receiptRequired: false,
+    status: "ACTIVE",
+  },
+  {
+    id: "demo-meal",
+    code: "MEAL",
+    name: "Konsumsi",
+    receiptRequired: true,
+    status: "ACTIVE",
+  },
 ];
 
 const DEMO_EMPLOYEES: Employee[] = [
-  { id: "demo-membership-local", fullName: "Ayu Demo", email: "ayu@bggold.local", employeeNumber: "BG-DEMO-01", jobTitle: "Retail Associate", status: "ACTIVE", roles: ["EMPLOYEE"] },
-  { id: "demo-team-dimas", fullName: "Dimas Pratama", email: "dimas@bggold.local", employeeNumber: "BG-0214", jobTitle: "Retail Associate", status: "ACTIVE", roles: ["EMPLOYEE"] },
-  { id: "demo-team-intan", fullName: "Intan Maharani", email: "intan@bggold.local", employeeNumber: "BG-0187", jobTitle: "Customer Service", status: "ACTIVE", roles: ["EMPLOYEE"] },
-  { id: "demo-team-raka", fullName: "Raka Wijaya", email: "raka@bggold.local", employeeNumber: "BG-0261", jobTitle: "Inventory", status: "ACTIVE", roles: ["EMPLOYEE"] },
-  { id: "demo-team-nia", fullName: "Nia Kusuma", email: "nia@bggold.local", employeeNumber: "BG-0239", jobTitle: "Retail Associate", status: "ACTIVE", roles: ["EMPLOYEE"] },
+  {
+    id: "demo-membership-local",
+    fullName: "Ayu Demo",
+    email: "ayu@bggold.local",
+    employeeNumber: "BG-DEMO-01",
+    jobTitle: "Retail Associate",
+    status: "ACTIVE",
+    roles: ["EMPLOYEE"],
+  },
+  {
+    id: "demo-team-dimas",
+    fullName: "Dimas Pratama",
+    email: "dimas@bggold.local",
+    employeeNumber: "BG-0214",
+    jobTitle: "Retail Associate",
+    status: "ACTIVE",
+    roles: ["EMPLOYEE"],
+  },
+  {
+    id: "demo-team-intan",
+    fullName: "Intan Maharani",
+    email: "intan@bggold.local",
+    employeeNumber: "BG-0187",
+    jobTitle: "Customer Service",
+    status: "ACTIVE",
+    roles: ["EMPLOYEE"],
+  },
+  {
+    id: "demo-team-raka",
+    fullName: "Raka Wijaya",
+    email: "raka@bggold.local",
+    employeeNumber: "BG-0261",
+    jobTitle: "Inventory",
+    status: "ACTIVE",
+    roles: ["EMPLOYEE"],
+  },
+  {
+    id: "demo-team-nia",
+    fullName: "Nia Kusuma",
+    email: "nia@bggold.local",
+    employeeNumber: "BG-0239",
+    jobTitle: "Retail Associate",
+    status: "ACTIVE",
+    roles: ["EMPLOYEE"],
+  },
 ];
 
 const DEMO_SECTIONS: Section[] = [
-  { id: "demo-section-hq", code: "FLAGSHIP", name: "BG GOLD Flagship", address: "Jakarta", timezone: "Asia/Jakarta", status: "ACTIVE" },
-  { id: "demo-section-warehouse", code: "WAREHOUSE", name: "BG GOLD Warehouse", address: "Jakarta", timezone: "Asia/Jakarta", status: "ACTIVE" },
-  { id: "demo-section-event", code: "EVENT", name: "Lokasi event", address: "Penugasan luar outlet", timezone: "Asia/Jakarta", status: "ACTIVE" },
+  {
+    id: "demo-section-hq",
+    code: "FLAGSHIP",
+    name: "BG GOLD Flagship",
+    address: "Jakarta",
+    timezone: "Asia/Jakarta",
+    status: "ACTIVE",
+  },
+  {
+    id: "demo-section-warehouse",
+    code: "WAREHOUSE",
+    name: "BG GOLD Warehouse",
+    address: "Jakarta",
+    timezone: "Asia/Jakarta",
+    status: "ACTIVE",
+  },
+  {
+    id: "demo-section-event",
+    code: "EVENT",
+    name: "Lokasi event",
+    address: "Penugasan luar outlet",
+    timezone: "Asia/Jakarta",
+    status: "ACTIVE",
+  },
 ];
 
 function initialState(): DemoState {
@@ -399,6 +568,8 @@ function initialState(): DemoState {
     attendanceEvents: [],
     deviceAttendanceState: "NOT_STARTED",
     deviceAttendanceEvents: [],
+    demoAttachments: {},
+    deviceEvidence: {},
     leaveRequests: [],
     claims: [],
     openShiftRequested: false,
@@ -512,28 +683,52 @@ function initialState(): DemoState {
       {
         id: "demo-event-showroom",
         title: "Private Preview Koleksi Aurum",
+        scheduleType: "EVENT",
+        showroomName: "Showroom BG GOLD Plaza Indonesia",
         roleName: "Event & hospitality",
         startsAt: shiftForDay("seed", 1, "seed", 18, 22).startsAt,
         endsAt: shiftForDay("seed", 1, "seed", 18, 22).endsAt,
         status: "PUBLISHED",
         section: { id: "demo-section-event", name: "Lokasi event" },
         participants: [
-          { membershipId: "demo-membership-local", employeeName: "Ayu Demo", employeeNumber: "BG-DEMO-01" },
-          { membershipId: "demo-team-dimas", employeeName: "Dimas Pratama", employeeNumber: "BG-0214" },
-          { membershipId: "demo-team-nia", employeeName: "Nia Kusuma", employeeNumber: "BG-0239" },
+          {
+            membershipId: "demo-membership-local",
+            employeeName: "Ayu Demo",
+            employeeNumber: "BG-DEMO-01",
+          },
+          {
+            membershipId: "demo-team-dimas",
+            employeeName: "Dimas Pratama",
+            employeeNumber: "BG-0214",
+          },
+          {
+            membershipId: "demo-team-nia",
+            employeeName: "Nia Kusuma",
+            employeeNumber: "BG-0239",
+          },
         ],
       },
       {
         id: "demo-event-warehouse",
         title: "Stock Opname Bulanan",
+        scheduleType: "EVENT",
+        showroomName: "Showroom BG GOLD Warehouse",
         roleName: "Inventory",
         startsAt: shiftForDay("seed", 2, "seed", 8, 14).startsAt,
         endsAt: shiftForDay("seed", 2, "seed", 8, 14).endsAt,
         status: "PUBLISHED",
         section: { id: "demo-section-warehouse", name: "BG GOLD Warehouse" },
         participants: [
-          { membershipId: "demo-team-raka", employeeName: "Raka Wijaya", employeeNumber: "BG-0261" },
-          { membershipId: "demo-team-intan", employeeName: "Intan Maharani", employeeNumber: "BG-0187" },
+          {
+            membershipId: "demo-team-raka",
+            employeeName: "Raka Wijaya",
+            employeeNumber: "BG-0261",
+          },
+          {
+            membershipId: "demo-team-intan",
+            employeeName: "Intan Maharani",
+            employeeNumber: "BG-0187",
+          },
         ],
       },
     ],
@@ -545,7 +740,11 @@ async function readState() {
   if (raw) {
     try {
       const stored = JSON.parse(raw) as DemoState;
-      if (stored.seedDate === localDate(new Date())) return stored;
+      if (stored.seedDate === localDate(new Date())) {
+        stored.demoAttachments ??= {};
+        stored.deviceEvidence ??= {};
+        return stored;
+      }
     } catch {
       // A corrupt demo is replaced with a fresh, isolated sample.
     }
@@ -559,7 +758,10 @@ async function writeState(state: DemoState) {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function today(state: DemoState, role: "employee" | "device" | "supervisor"): Today {
+function today(
+  state: DemoState,
+  role: "employee" | "device" | "supervisor",
+): Today {
   const device = role === "device";
   return {
     state: device ? state.deviceAttendanceState : state.attendanceState,
@@ -573,12 +775,30 @@ function today(state: DemoState, role: "employee" | "device" | "supervisor"): To
   };
 }
 
-function assignedShifts(): Shift[] {
-  return [
-    shiftForDay("demo-shift-today", 0, "Shift Galeri Utama", 9, 17),
-    shiftForDay("demo-shift-tomorrow", 1, "Layanan Pelanggan", 10, 18),
-    shiftForDay("demo-shift-next", 3, "Display & Inventory", 9, 17),
+function assignedShifts(
+  state: DemoState,
+  role: "employee" | "device" | "supervisor",
+): Shift[] {
+  const participants = DEMO_EMPLOYEES.slice(0, 3).map((item) => ({
+    membershipId: item.id,
+    employeeName: item.fullName,
+    employeeNumber: item.employeeNumber,
+  }));
+  const shifts: Shift[] = [
+    { ...shiftForDay("demo-shift-today", 0, "Shift Galeri Utama", 9, 17), participants },
+    { ...shiftForDay("demo-shift-tomorrow", 1, "Layanan Pelanggan", 10, 18), participants: participants.slice(0, 2) },
+    { ...shiftForDay("demo-shift-next", 3, "Display & Inventory", 9, 17), participants: participants.slice(1) },
   ];
+  if (role === "employee") {
+    shifts.push(
+      ...state.supervisorShifts.filter((item) =>
+        item.participants.some(
+          (participant) => participant.membershipId === "demo-membership-local",
+        ),
+      ),
+    );
+  }
+  return shifts;
 }
 
 function openShifts(requested: boolean): OpenShift[] {
@@ -590,7 +810,9 @@ function openShifts(requested: boolean): OpenShift[] {
   ];
 }
 
-function supervisorAttendanceReport(): SupervisorAttendanceReport {
+function supervisorAttendanceReport(
+  state: DemoState,
+): SupervisorAttendanceReport {
   const reportDay = addDays(new Date(), -1);
   reportDay.setHours(0, 0, 0, 0);
   const instant = (hour: number, minute: number) => {
@@ -601,90 +823,222 @@ function supervisorAttendanceReport(): SupervisorAttendanceReport {
   const shiftStartsAt = instant(9, 0);
   const shiftEndsAt = instant(17, 0);
 
+  const rows: SupervisorAttendanceReport["rows"] = [
+    {
+      membershipId: "demo-membership-local",
+      employeeName: "Ayu Demo",
+      employeeNumber: "BG-DEMO-01",
+      sectionName: "BG GOLD Flagship",
+      shiftTitle: "Shift Galeri Utama",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt: instant(8, 53),
+      clockOutAt: instant(17, 4),
+      clockInEventId: "demo-report-ayu-in",
+      clockOutEventId: "demo-report-ayu-out",
+      workMinutes: 491,
+      status: "ON_TIME",
+    },
+    {
+      membershipId: "demo-team-dimas",
+      employeeName: "Dimas Pratama",
+      employeeNumber: "BG-0214",
+      sectionName: "BG GOLD Flagship",
+      shiftTitle: "Shift Galeri Utama",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt: instant(9, 18),
+      clockOutAt: instant(17, 7),
+      clockInEventId: "demo-team-event-1",
+      clockOutEventId: "demo-report-dimas-out",
+      workMinutes: 469,
+      status: "LATE",
+    },
+    {
+      membershipId: "demo-team-intan",
+      employeeName: "Intan Maharani",
+      employeeNumber: "BG-0187",
+      sectionName: "BG GOLD Flagship",
+      shiftTitle: "Layanan Pelanggan",
+      shiftStartsAt,
+      shiftEndsAt,
+      workMinutes: 0,
+      status: "LEAVE",
+    },
+    {
+      membershipId: "demo-team-raka",
+      employeeName: "Raka Wijaya",
+      employeeNumber: "BG-0261",
+      sectionName: "BG GOLD Warehouse",
+      shiftTitle: "Display & Inventory",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt: instant(8, 47),
+      clockOutAt: instant(17, 1),
+      clockInEventId: "demo-report-raka-in",
+      clockOutEventId: "demo-team-event-approved",
+      workMinutes: 494,
+      status: "ON_TIME",
+    },
+    {
+      membershipId: "demo-team-nia",
+      employeeName: "Nia Kusuma",
+      employeeNumber: "BG-0239",
+      sectionName: "BG GOLD Flagship",
+      shiftTitle: "Shift Galeri Utama",
+      shiftStartsAt,
+      shiftEndsAt,
+      workMinutes: 0,
+      status: "ABSENT",
+    },
+    {
+      membershipId: "demo-team-bima",
+      employeeName: "Bima Saputra",
+      employeeNumber: "BG-0294",
+      sectionName: "BG GOLD Warehouse",
+      shiftTitle: "Display & Inventory",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt: instant(8, 56),
+      clockOutAt: instant(17, 12),
+      clockInEventId: "demo-report-bima-in",
+      clockOutEventId: "demo-report-bima-out",
+      workMinutes: 496,
+      status: "ON_TIME",
+    },
+  ];
+  const deviceClockIn = state.deviceAttendanceEvents.find(
+    (event) => event.actionType === "CLOCK_IN",
+  );
+  const deviceClockOut = state.deviceAttendanceEvents.find(
+    (event) => event.actionType === "CLOCK_OUT",
+  );
+  const deviceRecord = deviceClockIn
+    ? state.deviceEvidence[deviceClockIn.id]
+    : deviceClockOut
+      ? state.deviceEvidence[deviceClockOut.id]
+      : undefined;
+  if (deviceRecord) {
+    const clockInAt = deviceClockIn?.recordedAt;
+    const clockOutAt = deviceClockOut?.recordedAt;
+    rows.unshift({
+      membershipId: "demo-device-membership-local",
+      employeeName: deviceRecord.employeeName,
+      employeeNumber: deviceRecord.employeeNumber,
+      sectionName: deviceRecord.detail.section?.name ?? "BG GOLD Flagship",
+      shiftTitle: "Mode Showroom · 1 HP",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt,
+      clockOutAt,
+      clockInEventId: deviceClockIn?.id,
+      clockOutEventId: deviceClockOut?.id,
+      workMinutes:
+        clockInAt && clockOutAt
+          ? Math.max(
+              0,
+              Math.round(
+                (new Date(clockOutAt).getTime() -
+                  new Date(clockInAt).getTime()) /
+                  60_000,
+              ),
+            )
+          : 0,
+      status: clockOutAt ? "ON_TIME" : "WORKING",
+    });
+  }
   return {
     date: localDate(reportDay),
     generatedAt: new Date().toISOString(),
     organizationName: "BG GOLD · Ruang Demo",
-    rows: [
-      {
-        membershipId: "demo-membership-local",
-        employeeName: "Ayu Demo",
-        employeeNumber: "BG-DEMO-01",
-        sectionName: "BG GOLD Flagship",
-        shiftTitle: "Shift Galeri Utama",
-        shiftStartsAt,
-        shiftEndsAt,
-        clockInAt: instant(8, 53),
-        clockOutAt: instant(17, 4),
-        workMinutes: 491,
-        status: "ON_TIME",
-      },
-      {
-        membershipId: "demo-team-dimas",
-        employeeName: "Dimas Pratama",
-        employeeNumber: "BG-0214",
-        sectionName: "BG GOLD Flagship",
-        shiftTitle: "Shift Galeri Utama",
-        shiftStartsAt,
-        shiftEndsAt,
-        clockInAt: instant(9, 18),
-        clockOutAt: instant(17, 7),
-        workMinutes: 469,
-        status: "LATE",
-      },
-      {
-        membershipId: "demo-team-intan",
-        employeeName: "Intan Maharani",
-        employeeNumber: "BG-0187",
-        sectionName: "BG GOLD Flagship",
-        shiftTitle: "Layanan Pelanggan",
-        shiftStartsAt,
-        shiftEndsAt,
-        workMinutes: 0,
-        status: "LEAVE",
-      },
-      {
-        membershipId: "demo-team-raka",
-        employeeName: "Raka Wijaya",
-        employeeNumber: "BG-0261",
-        sectionName: "BG GOLD Warehouse",
-        shiftTitle: "Display & Inventory",
-        shiftStartsAt,
-        shiftEndsAt,
-        clockInAt: instant(8, 47),
-        clockOutAt: instant(17, 1),
-        workMinutes: 494,
-        status: "ON_TIME",
-      },
-      {
-        membershipId: "demo-team-nia",
-        employeeName: "Nia Kusuma",
-        employeeNumber: "BG-0239",
-        sectionName: "BG GOLD Flagship",
-        shiftTitle: "Shift Galeri Utama",
-        shiftStartsAt,
-        shiftEndsAt,
-        workMinutes: 0,
-        status: "ABSENT",
-      },
-      {
-        membershipId: "demo-team-bima",
-        employeeName: "Bima Saputra",
-        employeeNumber: "BG-0294",
-        sectionName: "BG GOLD Warehouse",
-        shiftTitle: "Display & Inventory",
-        shiftStartsAt,
-        shiftEndsAt,
-        clockInAt: instant(8, 56),
-        clockOutAt: instant(17, 12),
-        workMinutes: 496,
-        status: "ON_TIME",
-      },
-    ],
+    rows,
   };
 }
 
-function shiftForDay(id: string, offset: number, title: string, start: number, end: number): Shift {
+function demoAttendanceEvidence(eventId: string): AttendanceEvidenceDetail {
+  const now = new Date();
+  const warehouse =
+    eventId.includes("raka") ||
+    eventId.includes("bima") ||
+    eventId === "demo-team-event-approved";
+  const ayu = eventId.includes("ayu");
+  const employeeImage = ayu ? "ayu" : warehouse ? "raka" : "dimas";
+  const clockOut =
+    eventId.includes("out") || eventId === "demo-team-event-approved";
+  const recordedAt = new Date(now);
+  recordedAt.setHours(
+    clockOut ? 17 : ayu ? 8 : warehouse ? 8 : 9,
+    clockOut ? 4 : ayu ? 53 : warehouse ? 47 : 18,
+    0,
+    0,
+  );
+  return {
+    eventId,
+    actionType: clockOut ? "CLOCK_OUT" : "CLOCK_IN",
+    decision: eventId === "demo-team-event-1" ? "PENDING" : "APPROVED",
+    source: "MOBILE",
+    recordedAt: recordedAt.toISOString(),
+    reason:
+      eventId === "demo-team-event-1"
+        ? "GPS sempat tidak stabil saat tiba di outlet."
+        : undefined,
+    section: warehouse
+      ? {
+          id: "demo-section-warehouse",
+          name: "BG GOLD Warehouse",
+          address: "Jl. Gatot Subroto, Jakarta Selatan",
+        }
+      : {
+          id: "demo-section-hq",
+          name: "BG GOLD Flagship",
+          address: "Jl. M.H. Thamrin, Jakarta Pusat",
+        },
+    location: {
+      latitude: warehouse ? -6.205 : -6.2001,
+      longitude: warehouse ? 106.82 : 106.8168,
+      accuracyM: warehouse ? 9 : 12,
+      capturedAt: new Date(recordedAt.getTime() - 8_000).toISOString(),
+    },
+    attachment: {
+      id: `demo-attendance-selfie-${employeeImage}`,
+      contentType: "image/png",
+      sizeBytes: 2060000,
+      url: `demo-selfie-${employeeImage}`,
+      expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
+    },
+    device: {
+      id: `demo-device-${employeeImage}`,
+      platform: "ANDROID",
+      label: ayu
+        ? "Samsung Galaxy A55"
+        : warehouse
+          ? "OPPO Reno 11"
+          : "Xiaomi Redmi Note 13",
+    },
+    wifiSSID: warehouse ? "BGGOLD-WAREHOUSE" : "BGGOLD-STAFF",
+    integrityVerdict: {
+      providerAvailable: true,
+      tokenProvided: true,
+      riskScore: 0,
+      maxRiskScore: 35,
+    },
+    faceVerification: {
+      verified: true,
+      livenessPassed: true,
+      similarityScore: ayu ? 0.974 : warehouse ? 0.961 : 0.952,
+      provider: "BG GOLD Face Check · Demo",
+    },
+    evidenceSavedAt: new Date(recordedAt.getTime() + 1_000).toISOString(),
+  };
+}
+
+function shiftForDay(
+  id: string,
+  offset: number,
+  title: string,
+  start: number,
+  end: number,
+): Shift {
   const startsAt = new Date();
   startsAt.setDate(startsAt.getDate() + offset);
   startsAt.setHours(start, 0, 0, 0);
@@ -783,6 +1137,57 @@ async function attendanceAction(
     reason: typeof input.reason === "string" ? input.reason : undefined,
   };
   if (device) {
+    const inputEvidence = (input.evidence ?? {}) as Record<string, any>;
+    const section = demoEvidenceSection(String(input.sectionId ?? ""));
+    const attachmentId = String(inputEvidence.attachmentId ?? "");
+    const attachment = state.demoAttachments[attachmentId];
+    const selectedLocation = inputEvidence.selectedLocationName
+      ? String(inputEvidence.selectedLocationName)
+      : section.name;
+    const location = demoEvidenceLocation(section.id);
+    state.deviceEvidence[event.id] = {
+      employeeName: state.deviceEmployeeName ?? "Karyawan Showroom",
+      employeeNumber: "BG-1HP-01",
+      detail: {
+        eventId: event.id,
+        actionType: action,
+        decision: "APPROVED",
+        source: "KIOSK",
+        recordedAt,
+        section: { ...section, name: selectedLocation },
+        location: {
+          ...location,
+          capturedAt: recordedAt,
+        },
+        attachment: attachment
+          ? {
+              id: attachmentId,
+              contentType: attachment.contentType,
+              sizeBytes: attachment.sizeBytes,
+              url: attachment.uri,
+            }
+          : undefined,
+        device: {
+          id: state.deviceId ?? "demo-showroom-device",
+          platform: "ANDROID",
+          label: "HP Kiosk · BG GOLD Showroom",
+        },
+        wifiSSID: "BGGOLD-SHOWROOM",
+        integrityVerdict: {
+          providerAvailable: true,
+          tokenProvided: true,
+          riskScore: 0,
+          maxRiskScore: 35,
+        },
+        faceVerification: {
+          verified: true,
+          livenessPassed: true,
+          similarityScore: 0.958,
+          provider: "BG GOLD Kiosk Face Check · Demo",
+        },
+        evidenceSavedAt: recordedAt,
+      },
+    };
     state.deviceAttendanceState = next[action];
     state.deviceAttendanceEvents.unshift(event);
   } else {
@@ -793,10 +1198,42 @@ async function attendanceAction(
   return {
     actionId: event.id,
     decision: "APPROVED",
-    attendanceState: device ? state.deviceAttendanceState : state.attendanceState,
+    attendanceState: device
+      ? state.deviceAttendanceState
+      : state.attendanceState,
     recordedAt,
     message: "Tindakan demo tersimpan di perangkat ini.",
   };
+}
+
+function demoEvidenceSection(sectionId: string) {
+  if (sectionId === "demo-section-warehouse") {
+    return {
+      id: sectionId,
+      name: "BG GOLD Warehouse",
+      address: "Jl. Gatot Subroto, Jakarta Selatan",
+    };
+  }
+  if (sectionId === "demo-section-event") {
+    return {
+      id: sectionId,
+      name: "Lokasi event",
+      address: "Penugasan luar outlet",
+    };
+  }
+  return {
+    id: "demo-section-hq",
+    name: "BG GOLD Flagship",
+    address: "Jl. M.H. Thamrin, Jakarta Pusat",
+  };
+}
+
+function demoEvidenceLocation(sectionId: string) {
+  return sectionId === "demo-section-warehouse"
+    ? { latitude: -6.205, longitude: 106.82, accuracyM: 4 }
+    : sectionId === "demo-section-event"
+      ? { latitude: -6.2146, longitude: 106.8451, accuracyM: 6 }
+      : { latitude: -6.2001, longitude: 106.8168, accuracyM: 3 };
 }
 
 function leaveBalances(state: DemoState): LeaveBalance[] {
@@ -818,7 +1255,9 @@ function leaveBalances(state: DemoState): LeaveBalance[] {
 }
 
 async function createLeave(state: DemoState, input: Record<string, any>) {
-  const type = DEMO_LEAVE_TYPES.find((item) => item.id === input.leaveTypeId) ?? DEMO_LEAVE_TYPES[0]!;
+  const type =
+    DEMO_LEAVE_TYPES.find((item) => item.id === input.leaveTypeId) ??
+    DEMO_LEAVE_TYPES[0]!;
   const totalDays = inclusiveDays(String(input.startsOn), String(input.endsOn));
   const item: LeaveRequest = {
     id: `demo-leave-${Date.now()}`,
@@ -837,7 +1276,9 @@ async function createLeave(state: DemoState, input: Record<string, any>) {
 }
 
 async function createClaim(state: DemoState, input: Record<string, any>) {
-  const type = DEMO_CLAIM_TYPES.find((item) => item.id === input.claimTypeId) ?? DEMO_CLAIM_TYPES[0]!;
+  const type =
+    DEMO_CLAIM_TYPES.find((item) => item.id === input.claimTypeId) ??
+    DEMO_CLAIM_TYPES[0]!;
   const item: Claim = {
     id: `demo-claim-${Date.now()}`,
     claimTypeId: type.id,
@@ -901,11 +1342,9 @@ function addDays(date: Date, days: number) {
   return next;
 }
 
-function decideItem<T extends { id: string; status: string; decisionReason?: string }>(
-  items: T[],
-  id: string | undefined,
-  input: Record<string, any>,
-) {
+function decideItem<
+  T extends { id: string; status: string; decisionReason?: string },
+>(items: T[], id: string | undefined, input: Record<string, any>) {
   const item = items.find((candidate) => candidate.id === id);
   if (!item) return;
   item.status = input.decision === "REJECTED" ? "REJECTED" : "APPROVED";

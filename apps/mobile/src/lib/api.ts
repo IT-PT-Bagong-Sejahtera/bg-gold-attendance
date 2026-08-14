@@ -47,10 +47,14 @@ export type Today = {
 export type Shift = {
   id: string;
   title: string;
+  scheduleType?: "SHIFT" | "EVENT";
   roleName?: string;
+  showroomName?: string;
   startsAt: string;
   endsAt: string;
   section: { id: string; name: string };
+  participants?: ShiftParticipant[];
+  status?: "DRAFT" | "PUBLISHED";
 };
 export type Employee = {
   id: string;
@@ -86,7 +90,9 @@ export type SupervisorShift = Shift & {
   status: "DRAFT" | "PUBLISHED";
   participants: ShiftParticipant[];
 };
-export type OpenShift = Shift & { requestStatus?: "PENDING" | "APPROVED" | "REJECTED" };
+export type OpenShift = Shift & {
+  requestStatus?: "PENDING" | "APPROVED" | "REJECTED";
+};
 export type Policy = {
   id: string;
   name: string;
@@ -130,17 +136,129 @@ export type PasswordResetRequested = {
   message: string;
   developmentResetToken?: string;
 };
-export type LeaveType = { id: string; code: string; name: string; paid: boolean; status: string };
-export type LeaveBalance = { id: string; leaveTypeId: string; leaveTypeName: string; year: number; entitlementDays: number; usedDays: number; pendingDays: number; availableDays: number };
-export type LeaveRequest = { id: string; leaveTypeId: string; leaveTypeName: string; startsOn: string; endsOn: string; totalDays: number; reason: string; status: "PENDING" | "APPROVED" | "REJECTED" | "WITHDRAWN"; requestedAt: string; decisionReason?: string };
-export type ClaimType = { id: string; code: string; name: string; receiptRequired: boolean; status: string };
-export type Claim = { id: string; claimTypeId: string; claimTypeName: string; title: string; amount: number; currency: string; incurredOn: string; notes?: string; attachmentId?: string; status: "PENDING" | "APPROVED" | "REJECTED" | "WITHDRAWN"; ocrStatus: "NOT_CONFIGURED" | "PENDING" | "COMPLETE" | "FAILED"; ocrProvider?: string; ocrResult?: { merchant?: string; total?: number; currency?: string; transactionDate?: string; confidence: number; reference?: string }; requestedAt: string; decisionReason?: string };
-export type Announcement = { id: string; title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT"; requiresAcknowledgment: boolean; publishedAt: string; expiresAt?: string; read: boolean; acknowledged: boolean };
-export type Notification = { id: string; kind: string; title: string; body: string; resourceType?: string; resourceId?: string; read: boolean; createdAt: string };
+export type LeaveType = {
+  id: string;
+  code: string;
+  name: string;
+  paid: boolean;
+  status: string;
+};
+export type LeaveBalance = {
+  id: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  year: number;
+  entitlementDays: number;
+  usedDays: number;
+  pendingDays: number;
+  availableDays: number;
+};
+export type LeaveRequest = {
+  id: string;
+  leaveTypeId: string;
+  leaveTypeName: string;
+  startsOn: string;
+  endsOn: string;
+  totalDays: number;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "WITHDRAWN";
+  requestedAt: string;
+  decisionReason?: string;
+};
+export type ClaimType = {
+  id: string;
+  code: string;
+  name: string;
+  receiptRequired: boolean;
+  status: string;
+};
+export type Claim = {
+  id: string;
+  claimTypeId: string;
+  claimTypeName: string;
+  title: string;
+  amount: number;
+  currency: string;
+  incurredOn: string;
+  notes?: string;
+  attachmentId?: string;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "WITHDRAWN";
+  ocrStatus: "NOT_CONFIGURED" | "PENDING" | "COMPLETE" | "FAILED";
+  ocrProvider?: string;
+  ocrResult?: {
+    merchant?: string;
+    total?: number;
+    currency?: string;
+    transactionDate?: string;
+    confidence: number;
+    reference?: string;
+  };
+  requestedAt: string;
+  decisionReason?: string;
+};
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  priority: "NORMAL" | "IMPORTANT" | "URGENT";
+  requiresAcknowledgment: boolean;
+  publishedAt: string;
+  expiresAt?: string;
+  read: boolean;
+  acknowledged: boolean;
+};
+export type Notification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  resourceType?: string;
+  resourceId?: string;
+  read: boolean;
+  createdAt: string;
+};
 export type SupervisorAttendanceRequest = AttendanceRequest & {
   membershipId: string;
   employeeName: string;
   employeeNumber: string;
+};
+export type AttendanceEvidenceDetail = {
+  eventId: string;
+  actionType: AttendanceEventAction;
+  decision: "APPROVED" | "PENDING" | "REJECTED";
+  source: string;
+  recordedAt: string;
+  reason?: string;
+  section?: { id: string; name: string; address?: string };
+  location?: {
+    latitude: number;
+    longitude: number;
+    accuracyM?: number;
+    capturedAt?: string;
+  };
+  attachment?: {
+    id: string;
+    contentType: string;
+    sizeBytes: number;
+    url?: string;
+    expiresAt?: string;
+  };
+  device?: { id: string; platform: string; label?: string };
+  wifiSSID?: string;
+  integrityVerdict?: {
+    providerAvailable?: boolean;
+    tokenProvided?: boolean;
+    failOpen?: boolean;
+    riskScore?: number;
+    maxRiskScore?: number;
+  };
+  faceVerification?: {
+    verified: boolean;
+    livenessPassed: boolean;
+    similarityScore: number;
+    provider: string;
+  };
+  evidenceSavedAt?: string;
 };
 export type SupervisorLeaveRequest = LeaveRequest & {
   membershipId: string;
@@ -165,11 +283,7 @@ export type SupervisorShiftRequest = {
   requestedAt: string;
 };
 export type SupervisorAttendanceReportStatus =
-  | "ON_TIME"
-  | "LATE"
-  | "ABSENT"
-  | "LEAVE"
-  | "WORKING";
+  "ON_TIME" | "LATE" | "ABSENT" | "LEAVE" | "WORKING";
 export type SupervisorAttendanceReportRow = {
   membershipId: string;
   employeeName: string;
@@ -180,6 +294,8 @@ export type SupervisorAttendanceReportRow = {
   shiftEndsAt: string;
   clockInAt?: string;
   clockOutAt?: string;
+  clockInEventId?: string;
+  clockOutEventId?: string;
   workMinutes: number;
   status: SupervisorAttendanceReportStatus;
 };
@@ -220,9 +336,7 @@ export function setAccessTokenRenewalHandler(
 async function renewAccessToken(failedAccessToken: string) {
   if (!accessTokenRenewalHandler) return null;
   if (!accessTokenRenewalInFlight) {
-    accessTokenRenewalInFlight = accessTokenRenewalHandler(
-      failedAccessToken,
-    )
+    accessTokenRenewalInFlight = accessTokenRenewalHandler(failedAccessToken)
       .catch(() => null)
       .finally(() => {
         accessTokenRenewalInFlight = null;
@@ -294,16 +408,11 @@ async function uploadAttachment(
 ) {
   if (isDemoAccessToken(token)) {
     const { demoUploadAttachment } = await import("./demoApi");
-    return demoUploadAttachment(mimeType);
+    return demoUploadAttachment(mimeType, uri);
   }
   const body = new FormData();
   body.append("file", { uri, name, type: mimeType } as unknown as Blob);
-  const response = await fetchAPI(
-    path,
-    { method: "POST", body },
-    token,
-    false,
-  );
+  const response = await fetchAPI(path, { method: "POST", body }, token, false);
   if (!response.ok) {
     const payload = (await response
       .json()
@@ -360,23 +469,106 @@ export const api = {
     request<AttendanceEvent[]>("/me/attendance/history", {}, token),
   requests: (token: string) =>
     request<AttendanceRequest[]>("/me/requests", {}, token),
-  leaveTypes: (token: string) => request<LeaveType[]>("/leave-types", {}, token),
-  leaveBalances: (token: string, year = new Date().getFullYear()) => request<LeaveBalance[]>(`/me/leave-balances?year=${year}`, {}, token),
-  leaveRequests: (token: string) => request<LeaveRequest[]>("/me/leave-requests", {}, token),
-  createLeaveRequest: (token: string, payload: { leaveTypeId: string; startsOn: string; endsOn: string; reason: string }) => request<{ id: string; status: string; totalDays: number }>("/me/leave-requests", { method: "POST", body: JSON.stringify(payload) }, token),
-  withdrawLeaveRequest: (token: string, requestId: string) => request<{ id: string; status: string }>(`/me/leave-requests/${encodeURIComponent(requestId)}/withdraw`, { method: "POST", body: "{}" }, token),
-  claimTypes: (token: string) => request<ClaimType[]>("/claim-types", {}, token),
+  leaveTypes: (token: string) =>
+    request<LeaveType[]>("/leave-types", {}, token),
+  leaveBalances: (token: string, year = new Date().getFullYear()) =>
+    request<LeaveBalance[]>(`/me/leave-balances?year=${year}`, {}, token),
+  leaveRequests: (token: string) =>
+    request<LeaveRequest[]>("/me/leave-requests", {}, token),
+  createLeaveRequest: (
+    token: string,
+    payload: {
+      leaveTypeId: string;
+      startsOn: string;
+      endsOn: string;
+      reason: string;
+    },
+  ) =>
+    request<{ id: string; status: string; totalDays: number }>(
+      "/me/leave-requests",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
+  withdrawLeaveRequest: (token: string, requestId: string) =>
+    request<{ id: string; status: string }>(
+      `/me/leave-requests/${encodeURIComponent(requestId)}/withdraw`,
+      { method: "POST", body: "{}" },
+      token,
+    ),
+  claimTypes: (token: string) =>
+    request<ClaimType[]>("/claim-types", {}, token),
   claims: (token: string) => request<Claim[]>("/me/claims", {}, token),
-  createClaim: (token: string, payload: { claimTypeId: string; title: string; amount: number; currency: string; incurredOn: string; notes: string; attachmentId?: string }) => request<{ id: string; status: string }>("/me/claims", { method: "POST", body: JSON.stringify(payload) }, token),
-  withdrawClaim: (token: string, claimId: string) => request<{ id: string; status: string }>(`/me/claims/${encodeURIComponent(claimId)}/withdraw`, { method: "POST", body: "{}" }, token),
-  announcements: (token: string) => request<Announcement[]>("/me/announcements", {}, token),
-  announcementReceipt: (token: string, announcementId: string, action: "READ" | "ACKNOWLEDGE") => request<{ id: string; action: string }>(`/me/announcements/${encodeURIComponent(announcementId)}/receipt`, { method: "POST", body: JSON.stringify({ action }) }, token),
-  notifications: (token: string) => request<Notification[]>("/me/notifications", {}, token),
-  notificationUnreadCount: (token: string) => request<{ count: number }>("/me/notifications/unread-count", {}, token),
-  readNotification: (token: string, notificationId: string) => request<{ id: string; read: boolean }>(`/me/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST", body: "{}" }, token),
-  registerDevice: (token: string, payload: { platform: "ANDROID" | "IOS"; installationId: string; pushToken?: string; deviceLabel?: string }) => request<{ id: string; status: string }>("/me/devices", { method: "POST", body: JSON.stringify(payload) }, token),
-  enrollFace: (token: string, attachmentId: string) => request<{ id: string; status: string }>("/me/face/enroll", { method: "POST", body: JSON.stringify({ attachmentId }) }, token),
-  verifyFace: (token: string, attachmentId: string) => request<{ id: string; verified: boolean; expiresAt: string }>("/me/face/verify", { method: "POST", body: JSON.stringify({ attachmentId }) }, token),
+  createClaim: (
+    token: string,
+    payload: {
+      claimTypeId: string;
+      title: string;
+      amount: number;
+      currency: string;
+      incurredOn: string;
+      notes: string;
+      attachmentId?: string;
+    },
+  ) =>
+    request<{ id: string; status: string }>(
+      "/me/claims",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
+  withdrawClaim: (token: string, claimId: string) =>
+    request<{ id: string; status: string }>(
+      `/me/claims/${encodeURIComponent(claimId)}/withdraw`,
+      { method: "POST", body: "{}" },
+      token,
+    ),
+  announcements: (token: string) =>
+    request<Announcement[]>("/me/announcements", {}, token),
+  announcementReceipt: (
+    token: string,
+    announcementId: string,
+    action: "READ" | "ACKNOWLEDGE",
+  ) =>
+    request<{ id: string; action: string }>(
+      `/me/announcements/${encodeURIComponent(announcementId)}/receipt`,
+      { method: "POST", body: JSON.stringify({ action }) },
+      token,
+    ),
+  notifications: (token: string) =>
+    request<Notification[]>("/me/notifications", {}, token),
+  notificationUnreadCount: (token: string) =>
+    request<{ count: number }>("/me/notifications/unread-count", {}, token),
+  readNotification: (token: string, notificationId: string) =>
+    request<{ id: string; read: boolean }>(
+      `/me/notifications/${encodeURIComponent(notificationId)}/read`,
+      { method: "POST", body: "{}" },
+      token,
+    ),
+  registerDevice: (
+    token: string,
+    payload: {
+      platform: "ANDROID" | "IOS";
+      installationId: string;
+      pushToken?: string;
+      deviceLabel?: string;
+    },
+  ) =>
+    request<{ id: string; status: string }>(
+      "/me/devices",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
+  enrollFace: (token: string, attachmentId: string) =>
+    request<{ id: string; status: string }>(
+      "/me/face/enroll",
+      { method: "POST", body: JSON.stringify({ attachmentId }) },
+      token,
+    ),
+  verifyFace: (token: string, attachmentId: string) =>
+    request<{ id: string; verified: boolean; expiresAt: string }>(
+      "/me/face/verify",
+      { method: "POST", body: JSON.stringify({ attachmentId }) },
+      token,
+    ),
   shifts: (token: string, from: string, to: string) =>
     request<Shift[]>(
       `/me/shifts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
@@ -404,6 +596,18 @@ export const api = {
   supervisorAttendanceReport: (token: string, date?: string) =>
     request<SupervisorAttendanceReport>(
       `/attendance/report${date ? `?date=${encodeURIComponent(date)}` : ""}`,
+      {},
+      token,
+    ),
+  attendanceEvidence: (token: string, eventId: string) =>
+    request<AttendanceEvidenceDetail>(
+      `/attendance/events/${encodeURIComponent(eventId)}/evidence`,
+      {},
+      token,
+    ),
+  myAttendanceEvidence: (token: string, eventId: string) =>
+    request<AttendanceEvidenceDetail>(
+      `/me/attendance/events/${encodeURIComponent(eventId)}/evidence`,
       {},
       token,
     ),
@@ -436,7 +640,11 @@ export const api = {
       token,
     ),
   supervisorClaims: (token: string, status = "PENDING") =>
-    request<SupervisorClaim[]>(`/claims?status=${encodeURIComponent(status)}`, {}, token),
+    request<SupervisorClaim[]>(
+      `/claims?status=${encodeURIComponent(status)}`,
+      {},
+      token,
+    ),
   decideClaim: (
     token: string,
     claimId: string,
@@ -478,7 +686,9 @@ export const api = {
     payload: {
       sectionId: string;
       title: string;
+      scheduleType?: "SHIFT" | "EVENT";
       roleName?: string;
+      showroomName?: string;
       startsAt: string;
       endsAt: string;
       publish: boolean;
@@ -489,6 +699,16 @@ export const api = {
     request<{ id: string }>(
       "/shifts",
       { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
+  updateShiftParticipants: (
+    token: string,
+    shiftId: string,
+    membershipIds: string[],
+  ) =>
+    request<{ id: string; membershipIds: string[] }>(
+      `/shifts/${encodeURIComponent(shiftId)}/participants`,
+      { method: "PATCH", body: JSON.stringify({ membershipIds }) },
       token,
     ),
   policy: (token: string, sectionId?: string) =>

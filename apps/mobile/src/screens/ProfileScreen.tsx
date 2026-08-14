@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -12,6 +12,7 @@ import {
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
 import { AccountRegistrationCard } from "../components/AccountRegistrationCard";
+import { TutorialLauncher } from "../components/GuidedTutorial";
 import { api, type Me, type Organization } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { colors, spacing } from "../theme";
@@ -77,6 +78,8 @@ export function ProfileScreen() {
     } catch(reason){setError(reason instanceof Error?reason.message:"Wajah belum dapat didaftarkan.");}
     finally{setFaceSaving(false);}
   }
+  const identityRef = useRef<View>(null);
+  const securityRef = useRef<View>(null);
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
@@ -89,7 +92,7 @@ export function ProfileScreen() {
         {error ? <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorBox}><Text style={styles.error}>{error}</Text><Pressable accessibilityRole="button" onPress={()=>void load()} style={styles.retryButton}><Text style={styles.retryText}>Coba lagi</Text></Pressable></View> : null}
         {me ? (
           <>
-            <View style={styles.identity}>
+            <View ref={identityRef} collapsable={false} style={styles.identity}>
               <View
                 accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants"
@@ -173,7 +176,7 @@ export function ProfileScreen() {
           {faceNotice?<Text style={styles.faceNotice}>{faceNotice}</Text>:null}
           <Pressable accessibilityRole="button" accessibilityLabel="Daftarkan atau perbarui wajah" disabled={faceSaving} onPress={()=>void enrollFace()} style={styles.faceButton}><Ionicons name="scan-outline" size={19} color={colors.espresso}/><Text style={styles.faceButtonText}>{faceSaving?"Mendaftarkan…":"Daftarkan atau perbarui wajah"}</Text></Pressable>
         </View>
-        <View style={styles.security}>
+        <View ref={securityRef} collapsable={false} style={styles.security}>
           <Text style={styles.sectionTitle}>Keamanan sesi</Text>
           <Text style={styles.copy}>
             {auth.isDemo
@@ -213,6 +216,21 @@ export function ProfileScreen() {
           </Pressable>
         </View>
       </ScrollView>
+      <TutorialLauncher
+        accessibilityLabel="Buka tutorial Profil"
+        steps={[
+          {
+            target: identityRef,
+            title: "Periksa akun dan peran",
+            body: "Pastikan nama, email, nomor karyawan, organisasi, dan peran Anda benar. Supervisor juga dapat mendaftarkan akun karyawan dari halaman ini.",
+          },
+          {
+            target: securityRef,
+            title: "Kelola keamanan sesi",
+            body: "Gunakan bagian ini untuk mereset data demo bila perlu atau keluar dengan aman dari akun dan perangkat.",
+          },
+        ]}
+      />
     </Screen>
   );
 }

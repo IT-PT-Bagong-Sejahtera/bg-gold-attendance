@@ -37,6 +37,7 @@ jest.mock("../lib/api", () => ({
     verifyFace: jest.fn(),
     selfie: jest.fn(),
     action: jest.fn(),
+    myAttendanceEvidence: jest.fn(),
   },
 }));
 
@@ -140,6 +141,15 @@ describe("HomeScreen attendance flow", () => {
       recordedAt: "2026-08-11T01:15:04Z",
       message: "Clock-in berhasil dicatat.",
     });
+    (api.myAttendanceEvidence as jest.Mock).mockResolvedValue({
+      eventId: "event-home-detail",
+      actionType: "CLOCK_IN",
+      decision: "APPROVED",
+      source: "MOBILE",
+      recordedAt: "2026-08-11T01:15:04Z",
+      section: { id: "section-1", name: "BG GOLD Head Office" },
+      location: { latitude: -6.2, longitude: 106.8, accuracyM: 8 },
+    });
     (flushAttendanceOutbox as jest.Mock).mockResolvedValue({
       sent: 0,
       pending: 0,
@@ -168,6 +178,34 @@ describe("HomeScreen attendance flow", () => {
     expect(screen.getByText("BG GOLD Head Office · Gold Advisor")).toBeTruthy();
     expect(screen.getByText("09.00 – 17.00")).toBeTruthy();
     expect(screen.getByText("Anywhere Default · Di mana saja")).toBeTruthy();
+  });
+
+  it("opens the employee's own attendance detail from latest activity", async () => {
+    (api.today as jest.Mock).mockReset().mockResolvedValue({
+      state: "WORKING",
+      latestEvents: [
+        {
+          id: "event-home-detail",
+          actionType: "CLOCK_IN",
+          decision: "APPROVED",
+          recordedAt: "2026-08-11T01:15:04Z",
+        },
+      ],
+    });
+
+    await render(<HomeScreen />);
+    await fireEvent.press(
+      await screen.findByRole("button", {
+        name: "Lihat detail absensi Clock in",
+      }),
+    );
+
+    expect(await screen.findByText("DETAIL ABSENSI ANDA")).toBeTruthy();
+    expect(screen.getByText("BG GOLD Head Office")).toBeTruthy();
+    expect(api.myAttendanceEvidence).toHaveBeenCalledWith(
+      "test-access-token",
+      "event-home-detail",
+    );
   });
 
   it("previews location, submits once, and advances to clock out", async () => {

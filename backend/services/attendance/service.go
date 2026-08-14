@@ -433,7 +433,7 @@ func (s *Service) resolveShift(ctx context.Context, tx *sql.Tx, principal auth.P
 		SELECT BIN_TO_UUID(s.id), BIN_TO_UUID(s.section_id), s.starts_at, s.ends_at
 		FROM shifts s JOIN shift_assignments sa ON sa.shift_id = s.id
 		WHERE s.organization_id = UUID_TO_BIN(?) AND sa.membership_id = UUID_TO_BIN(?)
-		  AND s.status = 'PUBLISHED' AND sa.status <> 'CANCELLED'`
+		  AND s.status = 'PUBLISHED' AND s.schedule_type = 'SHIFT' AND sa.status <> 'CANCELLED'`
 	args := []any{principal.OrganizationID, principal.MembershipID}
 	if shiftID != "" {
 		baseQuery += " AND s.id = UUID_TO_BIN(?) LIMIT 1"

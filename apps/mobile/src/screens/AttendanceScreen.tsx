@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Crypto from "expo-crypto";
 import * as Location from "expo-location";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +14,8 @@ import {
 } from "react-native";
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
+import { AttendanceEvidenceModal } from "../components/AttendanceEvidenceModal";
+import { TutorialLauncher } from "../components/GuidedTutorial";
 import { actionLabel, optimisticAttendanceState } from "../lib/attendance";
 import {
   api,
@@ -46,6 +48,7 @@ export function AttendanceScreen() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [workMoreReason, setWorkMoreReason] = useState("");
+  const [selectedEvent, setSelectedEvent] = useState<AttendanceEvent | null>(null);
   const load = useCallback(async () => {
     try {
       const identity = await api.me(token);
@@ -196,6 +199,8 @@ export function AttendanceScreen() {
       setSubmitting(false);
     }
   }
+  const currentActionRef = useRef<View>(null);
+  const historyRef = useRef<View>(null);
   return (
     <Screen>
       <ScrollView
@@ -211,11 +216,13 @@ export function AttendanceScreen() {
           />
         }
       >
-        <Text style={styles.eyebrow}>KEHADIRAN</Text>
-        <Text style={styles.title}>Riwayat waktu</Text>
-        <Text style={styles.copy}>
-          Semua catatan menggunakan waktu server dan tidak dapat ditimpa.
-        </Text>
+        <View ref={currentActionRef} collapsable={false}>
+          <Text style={styles.eyebrow}>KEHADIRAN</Text>
+          <Text style={styles.title}>Riwayat waktu</Text>
+          <Text style={styles.copy}>
+            Semua catatan menggunakan waktu server dan tidak dapat ditimpa.
+          </Text>
+        </View>
         {secondaryAction ? (
           <View
             style={[
@@ -283,6 +290,7 @@ export function AttendanceScreen() {
                 (secondaryAction === "WORK_MORE" && !workMoreReason.trim()) ||
                 breakOutsideBlocked
               }
+              accessibilityLabel={actionLabel(secondaryAction)}
               accessibilityRole="button"
               onPress={() => void submit(secondaryAction)}
               style={[
@@ -314,6 +322,7 @@ export function AttendanceScreen() {
           </View>
         ) : null}
         <View style={styles.rule} />
+        <View ref={historyRef} collapsable={false}>
         {error ? (
           <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.error}>
             <Ionicons
@@ -343,7 +352,14 @@ export function AttendanceScreen() {
           </View>
         ) : (
           items.map((item) => (
-            <View key={item.id} style={styles.row}>
+            <Pressable
+              accessibilityHint="Membuka foto, lokasi, waktu server, dan bukti perangkat"
+              accessibilityLabel={`Lihat detail absensi ${actionLabel(item.actionType)}`}
+              accessibilityRole="button"
+              key={item.id}
+              onPress={() => setSelectedEvent(item)}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
               <View style={styles.icon}>
                 <Ionicons
                   name={eventIcon(item.actionType)}
@@ -381,10 +397,33 @@ export function AttendanceScreen() {
                     ? "Menunggu"
                     : "Ditolak"}
               </Text>
-            </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.inkMuted} />
+            </Pressable>
           ))
         )}
+        </View>
       </ScrollView>
+      <TutorialLauncher
+        accessibilityLabel="Buka tutorial Kehadiran"
+        steps={[
+          {
+            target: currentActionRef,
+            title: "Tindakan kehadiran Anda",
+            body: "Halaman ini menampilkan tindakan lanjutan seperti mulai istirahat, selesai istirahat, atau kerja tambahan sesuai status hari ini.",
+          },
+          {
+            target: historyRef,
+            title: "Buka riwayat dan buktinya",
+            body: "Ketuk setiap catatan untuk melihat status persetujuan, waktu server, lokasi, foto, dan bukti perangkat.",
+          },
+        ]}
+      />
+      <AttendanceEvidenceModal
+        event={selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+        timezone={me?.timezone ?? "UTC"}
+        token={token}
+      />
     </Screen>
   );
 }
@@ -541,6 +580,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.line,
   },
+  rowPressed: { backgroundColor: colors.ivoryDeep },
   icon: {
     width: 38,
     height: 38,

@@ -90,6 +90,7 @@ func TestRoleEndpointAuthorizationMatrix(t *testing.T) {
 		allowed      []string
 	}{
 		{http.MethodGet, "/me/attendance/today", all},
+		{http.MethodGet, "/me/attendance/events/00000000-0000-0000-0000-000000000000/evidence", all},
 		{http.MethodGet, "/sections", all},
 		{http.MethodGet, "/policies", all},
 		{http.MethodGet, "/employees", managers},
@@ -97,7 +98,9 @@ func TestRoleEndpointAuthorizationMatrix(t *testing.T) {
 		{http.MethodPost, "/sections", adminOnly},
 		{http.MethodPost, "/policies", adminHR},
 		{http.MethodPost, "/shifts", managers},
+		{http.MethodPatch, "/shifts/00000000-0000-0000-0000-000000000000/participants", managers},
 		{http.MethodGet, "/attendance/records", managers},
+		{http.MethodGet, "/attendance/events/00000000-0000-0000-0000-000000000000/evidence", managers},
 		{http.MethodPost, "/attendance/corrections", adminHR},
 		{http.MethodGet, "/reports/attendance.csv", managers},
 		{http.MethodGet, "/audit-logs", adminHR},

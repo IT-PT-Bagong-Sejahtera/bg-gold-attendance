@@ -2,7 +2,7 @@ import * as Crypto from "expo-crypto";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +20,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
+import { AttendanceEvidenceModal } from "../components/AttendanceEvidenceModal";
+import { TutorialLauncher } from "../components/GuidedTutorial";
 import {
   actionLabel,
   optimisticAttendanceState,
@@ -29,6 +31,7 @@ import {
   api,
   type Announcement,
   type AttendanceAction,
+  type AttendanceEvent,
   type Me,
   type Policy,
   type Shift,
@@ -111,6 +114,7 @@ export function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState<EvidencePreview | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<AttendanceEvent | null>(null);
   const [dynamicQRToken, setDynamicQRToken] = useState("");
   const [scanningQR, setScanningQR] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -124,23 +128,21 @@ export function HomeScreen() {
     try {
       const rangeStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const rangeEnd = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const [meData, todayData, shifts, announcementItems, unread] = await Promise.all([
-        api.me(token),
-        api.today(token),
-        api.shifts(token, rangeStart.toISOString(), rangeEnd.toISOString()),
-        api.announcements(token),
-        api.notificationUnreadCount(token),
-      ]);
+      const [meData, todayData, shifts, announcementItems, unread] =
+        await Promise.all([
+          api.me(token),
+          api.today(token),
+          api.shifts(token, rangeStart.toISOString(), rangeEnd.toISOString()),
+          api.announcements(token),
+          api.notificationUnreadCount(token),
+        ]);
       const shift =
         shifts.find((item) => item.id === todayData.activeShiftId) ??
         shifts[0] ??
         null;
       const policyData = await api.policy(token, shift?.section.id);
       setMe(meData);
-      if (
-        auth.demoRole === "device" &&
-        meData.fullName !== "Karyawan Demo 2"
-      ) {
+      if (auth.demoRole === "device" && meData.fullName !== "Karyawan Demo 2") {
         setAttendanceName(meData.fullName);
       }
       setToday(todayData);
@@ -148,16 +150,22 @@ export function HomeScreen() {
       setActiveShift(shift);
       setAnnouncements(announcementItems);
       setUnreadNotifications(unread.count);
-      void registerPushDevice(token, meData.organizationId).catch(() => undefined);
+      void registerPushDevice(token, meData.organizationId).catch(
+        () => undefined,
+      );
       const synchronized = await flushAttendanceOutbox(token, {
         organizationId: meData.organizationId,
         membershipId: meData.membershipId,
       });
       if (synchronized.sent > 0) {
         setToday(await api.today(token));
-        setNotice(`${synchronized.sent} absensi offline berhasil disinkronkan.`);
+        setNotice(
+          `${synchronized.sent} absensi offline berhasil disinkronkan.`,
+        );
       } else if (synchronized.needsReview > 0) {
-        setNotice("Ada absensi offline yang perlu ditinjau sebelum dikirim ulang.");
+        setNotice(
+          "Ada absensi offline yang perlu ditinjau sebelum dikirim ulang.",
+        );
       }
     } catch (reason) {
       setError(
@@ -180,7 +188,9 @@ export function HomeScreen() {
           setNotice(`${result.sent} absensi offline berhasil disinkronkan.`);
           void load();
         } else if (result.needsReview > 0) {
-          setNotice("Ada absensi offline yang perlu ditinjau sebelum dikirim ulang.");
+          setNotice(
+            "Ada absensi offline yang perlu ditinjau sebelum dikirim ulang.",
+          );
         }
       },
     );
@@ -305,7 +315,10 @@ export function HomeScreen() {
       setError("Tuliskan nama karyawan sebelum mengirim absensi.");
       return;
     }
-    if ((policy?.selfieRequired || policy?.modes.includes("FACE_VERIFICATION")) && !preview.selfieUri) {
+    if (
+      (policy?.selfieRequired || policy?.modes.includes("FACE_VERIFICATION")) &&
+      !preview.selfieUri
+    ) {
       setError("Kebijakan ini mewajibkan selfie sebelum absensi dikirim.");
       return;
     }
@@ -314,7 +327,9 @@ export function HomeScreen() {
       return;
     }
     if (policy?.modes.includes("WIFI") && !preview.wifi) {
-      setError("Sambungkan perangkat ke Wi-Fi outlet yang diizinkan lalu coba kembali.");
+      setError(
+        "Sambungkan perangkat ke Wi-Fi outlet yang diizinkan lalu coba kembali.",
+      );
       return;
     }
     setSubmitting(true);
@@ -335,7 +350,11 @@ export function HomeScreen() {
         });
       }
       if (policy?.modes.includes("FACE_VERIFICATION") && preview.selfieUri) {
-        const faceImage = await api.faceImage(token, preview.selfieUri, preview.selfieMimeType);
+        const faceImage = await api.faceImage(
+          token,
+          preview.selfieUri,
+          preview.selfieMimeType,
+        );
         const verification = await api.verifyFace(token, faceImage.id);
         faceVerificationId = verification.id;
       }
@@ -413,7 +432,11 @@ export function HomeScreen() {
       await api.announcementReceipt(token, id, "ACKNOWLEDGE");
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Konfirmasi pengumuman belum tersimpan.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Konfirmasi pengumuman belum tersimpan.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -422,6 +445,8 @@ export function HomeScreen() {
   const requiredAnnouncement = announcements.find(
     (item) => item.requiresAcknowledgment && !item.acknowledged,
   );
+  const attendanceActionRef = useRef<View>(null);
+  const latestActivityRef = useRef<View>(null);
   return (
     <Screen>
       <ScrollView
@@ -439,14 +464,18 @@ export function HomeScreen() {
       >
         {auth.isDemo ? (
           <View accessibilityRole="summary" style={styles.demoNotice}>
-            <Ionicons name="phone-portrait-outline" size={18} color={colors.espresso} />
+            <Ionicons
+              name="phone-portrait-outline"
+              size={18}
+              color={colors.espresso}
+            />
             <View style={styles.demoNoticeCopy}>
               <Text style={styles.demoNoticeTitle}>
                 {me?.roles.includes("SUPERVISOR")
                   ? "MODE DEMO SUPERVISOR"
                   : isDeviceDemo
-                    ? "MODE DEMO 2 · SATU HP"
-                  : "MODE DEMO KARYAWAN"}
+                    ? "MODE SHOWROOM · 1 HP"
+                    : "MODE DEMO KARYAWAN"}
               </Text>
               <Text style={styles.demoNoticeText}>
                 {isDeviceDemo
@@ -508,11 +537,15 @@ export function HomeScreen() {
             accessibilityLiveRegion="polite"
             style={styles.notice}
           >
-            <Ionicons name="cloud-done-outline" size={20} color={colors.emerald} />
+            <Ionicons
+              name="cloud-done-outline"
+              size={20}
+              color={colors.emerald}
+            />
             <Text>{notice}</Text>
           </View>
         ) : null}
-        <View style={styles.hero}>
+        <View ref={attendanceActionRef} collapsable={false} style={styles.hero}>
           <Text style={styles.heroEyebrow}>STATUS KEHADIRAN</Text>
           <Text style={styles.heroState}>
             {today ? stateLabels[today.state] : "Memuat…"}
@@ -528,7 +561,7 @@ export function HomeScreen() {
               ? `Waktu organisasi · ${organizationTimezone}`
               : auth.isDemo
                 ? `Waktu organisasi · ${organizationTimezone}`
-              : "Waktu resmi mengikuti server BG GOLD"}
+                : "Waktu resmi mengikuti server BG GOLD"}
           </Text>
           {action ? (
             <Pressable
@@ -566,7 +599,7 @@ export function HomeScreen() {
                   ? "Selesaikan istirahat melalui menu Attendance."
                   : today?.state === "COMPLETED"
                     ? "Absensi hari ini sudah tercatat. Clock-in berikutnya tersedia besok."
-                  : "Tidak ada tindakan utama saat ini."}
+                    : "Tidak ada tindakan utama saat ini."}
               </Text>
             </View>
           )}
@@ -597,7 +630,11 @@ export function HomeScreen() {
                 )}
               </Text>
               <View style={styles.shiftMeta}>
-                <Ionicons name="location-outline" size={16} color={colors.gold} />
+                <Ionicons
+                  name="location-outline"
+                  size={16}
+                  color={colors.gold}
+                />
                 <Text style={styles.shiftMetaText}>
                   {activeShift.section.name}
                   {activeShift.roleName ? ` · ${activeShift.roleName}` : ""}
@@ -623,7 +660,7 @@ export function HomeScreen() {
           </View>
           <Ionicons name="arrow-forward" size={20} color={colors.gold} />
         </View>
-        <View style={styles.timeline}>
+        <View ref={latestActivityRef} collapsable={false} style={styles.timeline}>
           {loading && !today ? (
             <LoadingRows label="Memuat catatan kehadiran" />
           ) : today?.latestEvents.length === 0 ? (
@@ -636,7 +673,14 @@ export function HomeScreen() {
             </View>
           ) : (
             today?.latestEvents.slice(0, 4).map((event) => (
-              <View key={event.id} style={styles.event}>
+              <Pressable
+                accessibilityHint="Membuka foto, lokasi, waktu server, dan bukti perangkat"
+                accessibilityLabel={`Lihat detail absensi ${actionLabel(event.actionType)}`}
+                accessibilityRole="button"
+                key={event.id}
+                onPress={() => setSelectedEvent(event)}
+                style={({ pressed }) => [styles.event, pressed && styles.eventPressed]}
+              >
                 <View style={styles.dot} />
                 <View style={styles.eventCopy}>
                   <Text style={styles.eventTitle}>
@@ -647,10 +691,10 @@ export function HomeScreen() {
                       new Date(event.recordedAt),
                       me?.timezone ?? "UTC",
                       {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      day: "numeric",
-                      month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        day: "numeric",
+                        month: "short",
                       },
                     )}
                   </Text>
@@ -665,7 +709,8 @@ export function HomeScreen() {
                 >
                   {event.decision === "APPROVED" ? "Tercatat" : "Menunggu"}
                 </Text>
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.inkMuted} />
+              </Pressable>
             ))
           )}
         </View>
@@ -683,6 +728,27 @@ export function HomeScreen() {
           </View>
         </View>
       </ScrollView>
+      <TutorialLauncher
+        accessibilityLabel="Buka tutorial Home"
+        steps={[
+          {
+            target: attendanceActionRef,
+            title: "Mulai dan akhiri kehadiran",
+            body: "Status hari ini dan tombol Clock in atau Clock out berada di sini. Ikuti pemeriksaan lokasi, perangkat, dan wajah bila diwajibkan.",
+          },
+          {
+            target: latestActivityRef,
+            title: "Periksa bukti absensi",
+            body: "Ketuk catatan terbaru untuk melihat waktu server, foto, lokasi, serta bukti perangkat Anda.",
+          },
+        ]}
+      />
+      <AttendanceEvidenceModal
+        event={selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+        timezone={organizationTimezone}
+        token={token}
+      />
       <Modal
         visible={Boolean(requiredAnnouncement)}
         transparent
@@ -701,7 +767,9 @@ export function HomeScreen() {
                 : "PENGUMUMAN PENTING"}
             </Text>
             <Text style={styles.sheetTitle}>{requiredAnnouncement?.title}</Text>
-            <Text style={styles.requiredBody}>{requiredAnnouncement?.body}</Text>
+            <Text style={styles.requiredBody}>
+              {requiredAnnouncement?.body}
+            </Text>
             <Text style={styles.requiredNote}>
               Konfirmasi ini dicatat agar tim tahu informasi sudah diterima.
             </Text>
@@ -750,12 +818,17 @@ export function HomeScreen() {
               <View style={styles.identityPanel}>
                 <View style={styles.identityHeading}>
                   <View style={styles.identityIcon}>
-                    <Ionicons name="person-outline" size={20} color={colors.gold} />
+                    <Ionicons
+                      name="person-outline"
+                      size={20}
+                      color={colors.gold}
+                    />
                   </View>
                   <View style={styles.identityCopy}>
                     <Text style={styles.evidenceLabel}>NAMA KARYAWAN</Text>
-                <Text style={styles.identityHint}>
-                      Nama ini akan mengikat akun demo ke HP ini. Kamera depan terbuka otomatis.
+                    <Text style={styles.identityHint}>
+                      Nama ini akan mengikat akun demo ke HP ini. Kamera depan
+                      terbuka otomatis.
                     </Text>
                   </View>
                 </View>
@@ -775,8 +848,14 @@ export function HomeScreen() {
                 />
                 {me?.fullName !== "Karyawan Demo 2" ? (
                   <View style={styles.bindingStatus}>
-                    <Ionicons name="lock-closed" size={14} color={colors.emerald} />
-                    <Text style={styles.bindingStatusText}>Terikat aman ke HP ini</Text>
+                    <Ionicons
+                      name="lock-closed"
+                      size={14}
+                      color={colors.emerald}
+                    />
+                    <Text style={styles.bindingStatusText}>
+                      Terikat aman ke HP ini
+                    </Text>
                   </View>
                 ) : null}
               </View>
@@ -790,12 +869,12 @@ export function HomeScreen() {
                     new Date(preview?.organizationRecordedAt ?? Date.now()),
                     organizationTimezone,
                     {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
                     },
                   )}
                 </Text>
@@ -804,7 +883,9 @@ export function HomeScreen() {
             </View>
             {auth.isDemo ? (
               <View style={styles.locationPicker}>
-                <Text style={styles.locationPickerLabel}>PILIH LOKASI ABSEN</Text>
+                <Text style={styles.locationPickerLabel}>
+                  PILIH LOKASI ABSEN
+                </Text>
                 <Text style={styles.locationPickerHint}>
                   Pilih tempat kerja yang sesuai sebelum mengirim.
                 </Text>
@@ -841,11 +922,17 @@ export function HomeScreen() {
                             selected && styles.locationRadioSelected,
                           ]}
                         >
-                          {selected ? <View style={styles.locationRadioDot} /> : null}
+                          {selected ? (
+                            <View style={styles.locationRadioDot} />
+                          ) : null}
                         </View>
                         <View style={styles.locationOptionCopy}>
-                          <Text style={styles.locationOptionName}>{location.name}</Text>
-                          <Text style={styles.locationOptionDetail}>{location.detail}</Text>
+                          <Text style={styles.locationOptionName}>
+                            {location.name}
+                          </Text>
+                          <Text style={styles.locationOptionDetail}>
+                            {location.detail}
+                          </Text>
                         </View>
                       </Pressable>
                     );
@@ -858,7 +945,9 @@ export function HomeScreen() {
               <View style={styles.evidenceCopy}>
                 <Text style={styles.evidenceLabel}>Lokasi terpilih</Text>
                 <Text style={styles.evidenceValue}>
-                  {preview?.locationName ?? activeShift?.section.name ?? "Belum dipilih"}
+                  {preview?.locationName ??
+                    activeShift?.section.name ??
+                    "Belum dipilih"}
                 </Text>
                 <Text style={styles.evidenceMeta}>
                   {isDeviceDemo
@@ -869,10 +958,24 @@ export function HomeScreen() {
                 </Text>
               </View>
             </View>
-            {policy?.modes.includes("WIFI") ? <View style={styles.evidenceRow}><Ionicons name="wifi-outline" size={21} color={colors.gold}/><View><Text style={styles.evidenceLabel}>Wi-Fi outlet</Text><Text style={styles.evidenceValue}>{preview?.wifi ? `${preview.wifi.ssid} · access point dikenali` : "Tidak dapat dikenali"}</Text></View></View> : null}
+            {policy?.modes.includes("WIFI") ? (
+              <View style={styles.evidenceRow}>
+                <Ionicons name="wifi-outline" size={21} color={colors.gold} />
+                <View>
+                  <Text style={styles.evidenceLabel}>Wi-Fi outlet</Text>
+                  <Text style={styles.evidenceValue}>
+                    {preview?.wifi
+                      ? `${preview.wifi.ssid} · access point dikenali`
+                      : "Tidak dapat dikenali"}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={preview?.selfieUri ? "Ganti foto bukti" : "Ambil foto bukti"}
+              accessibilityLabel={
+                preview?.selfieUri ? "Ganti foto bukti" : "Ambil foto bukti"
+              }
               onPress={() => void takeSelfie()}
               style={styles.selfieRow}
             >
@@ -892,7 +995,11 @@ export function HomeScreen() {
               )}
               <View>
                 <Text style={styles.evidenceLabel}>
-                  {isDeviceDemo || policy?.selfieRequired || policy?.modes.includes("FACE_VERIFICATION") ? "FOTO WAJAH WAJIB" : "SELFIE OPSIONAL"}
+                  {isDeviceDemo ||
+                  policy?.selfieRequired ||
+                  policy?.modes.includes("FACE_VERIFICATION")
+                    ? "FOTO WAJAH WAJIB"
+                    : "SELFIE OPSIONAL"}
                 </Text>
                 <Text style={styles.evidenceValue}>
                   {preview?.selfieUri
@@ -911,7 +1018,9 @@ export function HomeScreen() {
             {policy?.modes.includes("DYNAMIC_QR") ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={dynamicQRToken ? "Pindai ulang QR lokasi" : "Pindai QR lokasi"}
+                accessibilityLabel={
+                  dynamicQRToken ? "Pindai ulang QR lokasi" : "Pindai QR lokasi"
+                }
                 onPress={() => void scanDynamicQR()}
                 style={styles.qrRow}
               >
@@ -947,7 +1056,8 @@ export function HomeScreen() {
                 disabled:
                   submitting ||
                   (isDeviceDemo &&
-                    (attendanceName.trim().length < 2 || !preview?.selfieUri)) ||
+                    (attendanceName.trim().length < 2 ||
+                      !preview?.selfieUri)) ||
                   (Boolean(policy?.modes.includes("DYNAMIC_QR")) &&
                     !dynamicQRToken),
                 busy: submitting,
@@ -1193,7 +1303,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   shiftMetaText: { flex: 1, color: colors.espresso },
-  shiftEmptyCopy: { color: colors.inkMuted, lineHeight: 20, marginTop: spacing.sm },
+  shiftEmptyCopy: {
+    color: colors.inkMuted,
+    lineHeight: 20,
+    marginTop: spacing.sm,
+  },
   shiftPolicy: { color: colors.inkMuted, fontSize: 12, marginTop: spacing.sm },
   sectionTitle: {
     flexDirection: "row",
@@ -1225,6 +1339,7 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     gap: spacing.sm,
   },
+  eventPressed: { backgroundColor: colors.ivoryDeep },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.gold },
   eventCopy: { flex: 1 },
   eventTitle: { fontWeight: "600", color: colors.espresso },
@@ -1523,7 +1638,11 @@ const styles = StyleSheet.create({
   },
   confirmText: { color: colors.white, fontWeight: "700" },
   disabledButton: { opacity: 0.42 },
-  cancelButton: { minHeight: 48, alignItems: "center", justifyContent: "center" },
+  cancelButton: {
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   scanner: { flex: 1, backgroundColor: colors.espresso },
   scannerOverlay: {
     flex: 1,

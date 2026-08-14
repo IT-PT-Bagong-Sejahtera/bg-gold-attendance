@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   Platform,
@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
+import { TutorialLauncher } from "../components/GuidedTutorial";
 import { actionLabel } from "../lib/attendance";
 import { api, type AttendanceRequest, type Claim, type ClaimType, type LeaveBalance, type LeaveRequest, type LeaveType } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -133,6 +134,8 @@ export function RequestsScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+  const leaveRequestRef = useRef<View>(null);
+  const claimRequestRef = useRef<View>(null);
   return (
     <Screen>
       <ScrollView
@@ -154,7 +157,7 @@ export function RequestsScreen() {
           Permintaan absensi dan alasan keputusan tersimpan bersama riwayatnya.
         </Text>
         <View style={styles.rule} />
-        <View style={[styles.leaveHeader, needsStackedLayout && styles.leaveHeaderStacked]}>
+        <View ref={leaveRequestRef} collapsable={false} style={[styles.leaveHeader, needsStackedLayout && styles.leaveHeaderStacked]}>
           <View style={styles.leaveHeaderCopy}><Text style={styles.sectionEyebrow}>CUTI</Text><Text style={styles.sectionTitle}>Waktu untuk beristirahat</Text></View>
           <Pressable accessibilityRole="button" onPress={() => setFormOpen((value) => !value)} style={[styles.addButton, needsStackedLayout && styles.addButtonStacked]}><Text style={styles.addButtonText}>{formOpen ? "Tutup" : "+ Ajukan cuti"}</Text></Pressable>
         </View>
@@ -162,7 +165,7 @@ export function RequestsScreen() {
         {formOpen ? <View style={styles.leaveForm}><Text style={styles.formLabel}>Jenis cuti</Text><View style={styles.typeChoices}>{leaveTypes.map((type)=><Pressable accessibilityRole="button" accessibilityState={{selected:leaveTypeId===type.id}} key={type.id} onPress={()=>setLeaveTypeId(type.id)} style={[styles.typeChoice,leaveTypeId===type.id&&styles.typeChoiceSelected]}><Text style={leaveTypeId===type.id?styles.typeTextSelected:styles.typeText}>{type.name}</Text></Pressable>)}</View><Text style={styles.formLabel}>Tanggal mulai · YYYY-MM-DD</Text><TextInput accessibilityLabel="Tanggal mulai cuti" value={startsOn} onChangeText={setStartsOn} placeholder="2026-09-14" style={styles.input}/><Text style={styles.formLabel}>Tanggal selesai · YYYY-MM-DD</Text><TextInput accessibilityLabel="Tanggal selesai cuti" value={endsOn} onChangeText={setEndsOn} placeholder="2026-09-16" style={styles.input}/><Text style={styles.formLabel}>Alasan</Text><TextInput accessibilityLabel="Alasan cuti" value={reason} onChangeText={setReason} multiline maxLength={500} placeholder="Jelaskan seperlunya" style={[styles.input,styles.reasonInput]}/><Pressable accessibilityRole="button" accessibilityState={{disabled:saving,busy:saving}} disabled={saving} onPress={()=>void submitLeave()} style={styles.submitButton}><Text style={styles.submitText}>{saving?"Mengirim…":"Kirim permintaan"}</Text></Pressable></View>:null}
         <View style={styles.leaveList}>{leaveItems.map((item)=><View key={item.id} style={styles.leaveRow}><View style={styles.leaveRowTop}><Text style={styles.action}>{item.leaveTypeName}</Text><Text style={[styles.status,item.status==="APPROVED"?styles.approved:item.status==="REJECTED"?styles.rejected:styles.pending]}>{statusLabel[item.status]}</Text></View><Text style={styles.time}>{item.startsOn}–{item.endsOn} · {item.totalDays} hari kerja</Text><Text style={styles.reason}>“{item.reason}”</Text>{item.decisionReason?<Text style={styles.decisionReason}>Catatan supervisor: {item.decisionReason}</Text>:null}{item.status==="PENDING"?<Pressable accessibilityRole="button" disabled={saving} onPress={()=>void withdrawLeave(item.id)} style={styles.withdrawButton}><Text style={styles.withdrawText}>Batalkan permintaan</Text></Pressable>:null}</View>)}</View>
         <View style={styles.subRule} />
-        <View style={[styles.leaveHeader, needsStackedLayout && styles.leaveHeaderStacked]}>
+        <View ref={claimRequestRef} collapsable={false} style={[styles.leaveHeader, needsStackedLayout && styles.leaveHeaderStacked]}>
           <View style={styles.leaveHeaderCopy}><Text style={styles.sectionEyebrow}>KLAIM</Text><Text style={styles.sectionTitle}>Biaya kerja, tanpa teka-teki</Text></View>
           <Pressable accessibilityRole="button" onPress={() => setClaimFormOpen((value) => !value)} style={[styles.addButton, needsStackedLayout && styles.addButtonStacked]}><Text style={styles.addButtonText}>{claimFormOpen ? "Tutup" : "+ Ajukan klaim"}</Text></Pressable>
         </View>
@@ -289,6 +292,21 @@ export function RequestsScreen() {
           ))}
         </View>
       </ScrollView>
+      <TutorialLauncher
+        accessibilityLabel="Buka tutorial Permintaan"
+        steps={[
+          {
+            target: leaveRequestRef,
+            title: "Ajukan cuti",
+            body: "Ketuk Ajukan cuti, pilih jenis dan tanggal, lalu isi alasan. Status menunggu, disetujui, atau ditolak akan tetap tersimpan di halaman ini.",
+          },
+          {
+            target: claimRequestRef,
+            title: "Ajukan klaim biaya",
+            body: "Ketuk Ajukan klaim untuk mengisi jenis biaya, nominal, tanggal, catatan, serta foto struk bila diwajibkan.",
+          },
+        ]}
+      />
     </Screen>
   );
 }

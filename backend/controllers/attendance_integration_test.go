@@ -933,6 +933,23 @@ func TestShiftConflictAndPublicationLifecycle(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("first shift status %d: %s", status, body)
 	}
+	status, body = authorizedJSON(t, http.MethodPost, host.URL+"/api/v1/shifts", token, map[string]any{
+		"sectionId": sectionID, "title": "Custom Showroom Event", "scheduleType": "EVENT",
+		"showroomName": "Showroom BG GOLD Senayan", "startsAt": startsAt, "endsAt": endsAt,
+		"publish": true, "membershipIds": []string{membershipID},
+	})
+	if status != http.StatusCreated || !bytes.Contains(body, []byte(`"id"`)) {
+		t.Fatalf("overlapping custom event status %d: %s", status, body)
+	}
+	var eventEnvelope struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err = json.Unmarshal(body, &eventEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	createdIDs = append(createdIDs, eventEnvelope.Data.ID)
 	status, body, _ = create("Published Conflict Rejected", true)
 	if status != http.StatusConflict || !bytes.Contains(body, []byte(`"code":"SHIFT_CONFLICT"`)) {
 		t.Fatalf("overlapping published shift status %d: %s", status, body)
@@ -961,6 +978,25 @@ func TestShiftConflictAndPublicationLifecycle(t *testing.T) {
 	status, body = authorizedJSON(t, http.MethodGet, host.URL+"/api/v1/shifts?from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), token, nil)
 	if status != http.StatusOK || !bytes.Contains(body, []byte(`"participants"`)) || !bytes.Contains(body, []byte(`"membershipId":"`+membershipID+`"`)) {
 		t.Fatalf("manager shift participants missing status %d: %s", status, body)
+	}
+	if !bytes.Contains(body, []byte(`"scheduleType":"EVENT"`)) || !bytes.Contains(body, []byte(`"showroomName":"Showroom BG GOLD Senayan"`)) {
+		t.Fatalf("custom event metadata missing status %d: %s", status, body)
+	}
+	status, body = authorizedJSON(t, http.MethodPatch, host.URL+"/api/v1/shifts/"+draftID+"/participants", token, map[string]any{"membershipIds": []string{}})
+	if status != http.StatusOK {
+		t.Fatalf("clear shift participants status %d: %s", status, body)
+	}
+	status, body = authorizedJSON(t, http.MethodGet, host.URL+"/api/v1/me/shifts?from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), token, nil)
+	if status != http.StatusOK || bytes.Contains(body, []byte(draftID)) {
+		t.Fatalf("cleared shift remained assigned status %d: %s", status, body)
+	}
+	status, body = authorizedJSON(t, http.MethodPatch, host.URL+"/api/v1/shifts/"+draftID+"/participants", token, map[string]any{"membershipIds": []string{membershipID}})
+	if status != http.StatusOK {
+		t.Fatalf("restore shift participants status %d: %s", status, body)
+	}
+	status, body = authorizedJSON(t, http.MethodGet, host.URL+"/api/v1/me/shifts?from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), token, nil)
+	if status != http.StatusOK || !bytes.Contains(body, []byte(draftID)) || !bytes.Contains(body, []byte(`"membershipId":"`+membershipID+`"`)) {
+		t.Fatalf("personal schedule participant detail missing status %d: %s", status, body)
 	}
 }
 

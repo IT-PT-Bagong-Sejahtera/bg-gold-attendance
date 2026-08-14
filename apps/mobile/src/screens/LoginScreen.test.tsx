@@ -137,7 +137,7 @@ describe("LoginScreen", () => {
     );
 
     await fireEvent.press(
-      screen.getByRole("button", { name: "Coba Demo 2 satu HP" }),
+      screen.getByRole("button", { name: "Masuk demo showroom satu HP" }),
     );
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
