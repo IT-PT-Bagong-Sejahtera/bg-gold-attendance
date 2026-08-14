@@ -33,6 +33,7 @@ const STORAGE_KEY = "bg-gold.attendance.demo.v4";
 
 type DemoState = {
   seedDate: string;
+  sections: Section[];
   attendanceState: AttendanceState;
   attendanceEvents: AttendanceEvent[];
   deviceAttendanceState: AttendanceState;
@@ -313,13 +314,66 @@ export async function demoRequest<T>(
     return clone(DEMO_EMPLOYEES) as T;
   }
   if (path === "/sections" && method === "GET") {
-    return clone(DEMO_SECTIONS) as T;
+    return clone(state.sections) as T;
+  }
+  if (path === "/sections" && method === "POST") {
+    ensureDemoSectionManager(demoRole);
+    const code = String(input.code ?? "").trim().toUpperCase();
+    const name = String(input.name ?? "").trim();
+    if (!code || !name) {
+      throw new APIError(422, "VALIDATION_ERROR", "Kode dan nama showroom wajib diisi.");
+    }
+    if (state.sections.some((item) => item.code.toUpperCase() === code)) {
+      throw new APIError(409, "SECTION_CODE_EXISTS", "Kode showroom sudah digunakan.");
+    }
+    const section: Section = {
+      id: `demo-section-${Date.now()}`,
+      code,
+      name,
+      address: String(input.address ?? "").trim() || undefined,
+      timezone: String(input.timezone ?? "").trim() || "Asia/Jakarta",
+      status: "ACTIVE",
+    };
+    state.sections.unshift(section);
+    await writeState(state);
+    return { id: section.id } as T;
+  }
+  if (/^\/sections\/[^/]+$/.test(path) && method === "PATCH") {
+    ensureDemoSectionManager(demoRole);
+    const sectionId = path.split("/")[2] ?? "";
+    const section = state.sections.find((item) => item.id === sectionId);
+    if (!section) throw new APIError(404, "SECTION_NOT_FOUND", "Showroom tidak ditemukan.");
+    const code = String(input.code ?? "").trim().toUpperCase();
+    const name = String(input.name ?? "").trim();
+    if (!code || !name) {
+      throw new APIError(422, "VALIDATION_ERROR", "Kode dan nama showroom wajib diisi.");
+    }
+    if (state.sections.some((item) => item.id !== sectionId && item.code.toUpperCase() === code)) {
+      throw new APIError(409, "SECTION_CODE_EXISTS", "Kode showroom sudah digunakan.");
+    }
+    Object.assign(section, {
+      code,
+      name,
+      address: String(input.address ?? "").trim() || undefined,
+      timezone: String(input.timezone ?? "").trim() || "Asia/Jakarta",
+    });
+    await writeState(state);
+    return clone(section) as T;
+  }
+  if (/^\/sections\/[^/]+\/(activate|deactivate)$/.test(path) && method === "POST") {
+    ensureDemoSectionManager(demoRole);
+    const sectionId = path.split("/")[2] ?? "";
+    const section = state.sections.find((item) => item.id === sectionId);
+    if (!section) throw new APIError(404, "SECTION_NOT_FOUND", "Showroom tidak ditemukan.");
+    section.status = path.endsWith("/activate") ? "ACTIVE" : "INACTIVE";
+    await writeState(state);
+    return { id: section.id, status: section.status } as T;
   }
   if (path === "/shifts" && method === "GET") {
     return clone(state.supervisorShifts) as T;
   }
   if (path === "/shifts" && method === "POST") {
-    const section = DEMO_SECTIONS.find((item) => item.id === input.sectionId);
+    const section = state.sections.find((item) => item.id === input.sectionId);
     const participants = DEMO_EMPLOYEES.filter(
       (item) =>
         Array.isArray(input.membershipIds) &&
@@ -564,6 +618,7 @@ function initialState(): DemoState {
   const dayAfterTomorrow = localDate(addDays(now, 2));
   return {
     seedDate: localDate(now),
+    sections: clone(DEMO_SECTIONS),
     attendanceState: "NOT_STARTED",
     attendanceEvents: [],
     deviceAttendanceState: "NOT_STARTED",
@@ -741,6 +796,7 @@ async function readState() {
     try {
       const stored = JSON.parse(raw) as DemoState;
       if (stored.seedDate === localDate(new Date())) {
+        stored.sections ??= clone(DEMO_SECTIONS);
         stored.demoAttachments ??= {};
         stored.deviceEvidence ??= {};
         return stored;
@@ -752,6 +808,12 @@ async function readState() {
   const seeded = initialState();
   await writeState(seeded);
   return seeded;
+}
+
+function ensureDemoSectionManager(role: "employee" | "device" | "supervisor") {
+  if (role !== "supervisor") {
+    throw new APIError(403, "FORBIDDEN", "Hanya supervisor yang dapat mengelola showroom.");
+  }
 }
 
 async function writeState(state: DemoState) {

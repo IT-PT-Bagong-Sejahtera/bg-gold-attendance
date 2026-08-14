@@ -79,7 +79,17 @@ export type Section = {
   name: string;
   address?: string;
   timezone?: string;
+  latitude?: number;
+  longitude?: number;
   status: string;
+};
+export type SectionPayload = {
+  code: string;
+  name: string;
+  address: string;
+  timezone: string;
+  latitude?: number;
+  longitude?: number;
 };
 export type ShiftParticipant = {
   membershipId: string;
@@ -675,6 +685,28 @@ export const api = {
     ),
   employees: (token: string) => request<Employee[]>("/employees", {}, token),
   sections: (token: string) => request<Section[]>("/sections", {}, token),
+  createSection: (token: string, payload: SectionPayload) =>
+    request<{ id: string }>(
+      "/sections",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+    ),
+  updateSection: (token: string, sectionId: string, payload: SectionPayload) =>
+    request<{ id: string }>(
+      `/sections/${encodeURIComponent(sectionId)}`,
+      { method: "PATCH", body: JSON.stringify(payload) },
+      token,
+    ),
+  setSectionStatus: (
+    token: string,
+    sectionId: string,
+    status: "ACTIVE" | "INACTIVE",
+  ) =>
+    request<{ id: string; status: "ACTIVE" | "INACTIVE" }>(
+      `/sections/${encodeURIComponent(sectionId)}/${status === "ACTIVE" ? "activate" : "deactivate"}`,
+      { method: "POST" },
+      token,
+    ),
   supervisorShifts: (token: string, from: string, to: string) =>
     request<SupervisorShift[]>(
       `/shifts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,

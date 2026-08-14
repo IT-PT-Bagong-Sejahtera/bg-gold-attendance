@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -15,6 +16,17 @@ import { HomeScreen } from "./HomeScreen";
 import { captureCurrentWiFi } from "../lib/wifiEvidence";
 import { getAttendanceIntegrityToken } from "../lib/deviceIntegrity";
 
+let mockFocusCallback: (() => void) | undefined;
+jest.mock("@react-navigation/native", () => {
+  const React = require("react");
+  return {
+    useFocusEffect: (callback: () => void) => {
+      mockFocusCallback = callback;
+      React.useEffect(callback, [callback]);
+    },
+  };
+});
+
 const mockAuthState = {
   session: { accessToken: "test-access-token" },
   isDemo: false,
@@ -29,6 +41,7 @@ jest.mock("../lib/api", () => ({
     me: jest.fn(),
     today: jest.fn(),
     shifts: jest.fn(),
+    supervisorShifts: jest.fn(),
     policy: jest.fn(),
     announcements: jest.fn(),
     notificationUnreadCount: jest.fn(),
@@ -116,6 +129,7 @@ describe("HomeScreen attendance flow", () => {
       selfieRequired: false,
     });
     (api.shifts as jest.Mock).mockResolvedValue([]);
+    (api.supervisorShifts as jest.Mock).mockResolvedValue([]);
     (api.announcements as jest.Mock).mockResolvedValue([]);
     (api.notificationUnreadCount as jest.Mock).mockResolvedValue({ count: 0 });
     (api.announcementReceipt as jest.Mock).mockResolvedValue({ id: "announcement-1", action: "ACKNOWLEDGE" });
@@ -437,5 +451,76 @@ describe("HomeScreen attendance flow", () => {
     expect(
       await screen.findByRole("button", { name: "Clock out" }),
     ).toBeTruthy();
+  });
+
+  it("reloads and shows a newly created demo event when Home regains focus", async () => {
+    mockAuthState.session.accessToken = "bg-gold-local-demo-supervisor-access";
+    mockAuthState.isDemo = true;
+    mockAuthState.demoRole = "supervisor";
+    (api.today as jest.Mock).mockReset().mockResolvedValue({
+      state: "NOT_STARTED",
+      latestEvents: [],
+    });
+    (api.me as jest.Mock).mockResolvedValue({
+      id: "demo-supervisor-user-local",
+      email: "supervisor.demo@bggold.local",
+      fullName: "Sari Supervisor",
+      membershipId: "demo-supervisor-membership-local",
+      organizationId: "demo-organization-local",
+      timezone: "Asia/Jakarta",
+      employeeNumber: "BG-SPV-01",
+      roles: ["SUPERVISOR"],
+    });
+    const startsAt = new Date();
+    startsAt.setHours(9, 0, 0, 0);
+    const endsAt = new Date(startsAt);
+    endsAt.setHours(18, 0, 0, 0);
+    const event = {
+      id: "demo-custom-event-new",
+      title: "Private Preview",
+      scheduleType: "EVENT",
+      showroomName: "BG GOLD Kemang",
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      status: "PUBLISHED",
+      section: { id: "demo-section-event", name: "Lokasi event" },
+      participants: [],
+    };
+    (api.supervisorShifts as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([event]);
+
+    await render(<HomeScreen />);
+    const clockIn = await screen.findByRole("button", { name: "Clock in" });
+    await act(async () => {
+      mockFocusCallback?.();
+    });
+    await waitFor(() =>
+      expect(api.supervisorShifts).toHaveBeenCalledTimes(2),
+    );
+    await fireEvent.press(clockIn);
+
+    const eventLocation = await screen.findByRole("radio", {
+      name: /BG GOLD Kemang, Private Preview · Event custom hari ini/,
+    });
+    await fireEvent.press(eventLocation);
+    await fireEvent.press(screen.getByRole("button", { name: "Kirim absensi" }));
+
+    await waitFor(() =>
+      expect(submitAttendanceResilient).toHaveBeenCalledWith(
+        "bg-gold-local-demo-supervisor-access",
+        expect.any(Object),
+        "ui-test-idempotency-key",
+        expect.objectContaining({
+          type: "CLOCK_IN",
+          shiftId: "demo-custom-event-new",
+          sectionId: "demo-section-event",
+          evidence: expect.objectContaining({
+            selectedLocationName: "BG GOLD Kemang",
+          }),
+        }),
+        undefined,
+      ),
+    );
   });
 });

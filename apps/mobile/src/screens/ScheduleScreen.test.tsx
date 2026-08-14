@@ -2,6 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-
 import { api } from "../lib/api";
 import { ScheduleScreen } from "./ScheduleScreen";
 
+jest.mock("@react-navigation/native", () => {
+  const React = require("react");
+  return {
+    useFocusEffect: (callback: () => void) => React.useEffect(callback, [callback]),
+  };
+});
+
 jest.mock("../lib/auth", () => ({
   useAuth: () => ({ session: { accessToken: "schedule-test-token" } }),
 }));

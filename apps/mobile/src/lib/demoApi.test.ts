@@ -12,6 +12,7 @@ import type {
   SupervisorAttendanceRequest,
   SupervisorAttendanceReport,
   Today,
+  Section,
 } from "./api";
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
@@ -113,6 +114,39 @@ it("lets the demo supervisor create only an employee account", async () => {
       DEMO_SUPERVISOR_ACCESS_TOKEN,
     ),
   ).rejects.toThrow("Supervisor hanya dapat membuat akun karyawan");
+});
+
+it("persists showroom management for the demo supervisor", async () => {
+  const created = await demoRequest<{ id: string }>(
+    "/sections",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code: "KEMANG",
+        name: "BG GOLD Kemang",
+        address: "Jakarta Selatan",
+        timezone: "Asia/Jakarta",
+      }),
+    },
+    DEMO_SUPERVISOR_ACCESS_TOKEN,
+  );
+
+  expect(await demoRequest<Section[]>("/sections", {}, DEMO_SUPERVISOR_ACCESS_TOKEN)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: created.id, code: "KEMANG", name: "BG GOLD Kemang", status: "ACTIVE" }),
+    ]),
+  );
+
+  await demoRequest(
+    `/sections/${created.id}/deactivate`,
+    { method: "POST" },
+    DEMO_SUPERVISOR_ACCESS_TOKEN,
+  );
+  expect(
+    (await demoRequest<Section[]>("/sections", {}, DEMO_SUPERVISOR_ACCESS_TOKEN)).find(
+      (item) => item.id === created.id,
+    )?.status,
+  ).toBe("INACTIVE");
 });
 
 it("provides an all-employee attendance report for supervisor export", async () => {

@@ -25,6 +25,10 @@ jest.mock("../lib/api", () => ({
     faceImage: jest.fn(),
     enrollFace: jest.fn(),
     createEmployee: jest.fn(),
+    sections: jest.fn(),
+    createSection: jest.fn(),
+    updateSection: jest.fn(),
+    setSectionStatus: jest.fn(),
   },
 }));
 jest.mock("expo-image-picker",()=>({CameraType:{front:"front"},requestCameraPermissionsAsync:jest.fn(async()=>({granted:true})),launchCameraAsync:jest.fn(async()=>({canceled:false,assets:[{uri:"file:///face.jpg",mimeType:"image/jpeg"}]}))}));
@@ -57,6 +61,10 @@ describe("ProfileScreen organization selector", () => {
     ]);
     (api.faceImage as jest.Mock).mockResolvedValue({id:"face-image-1"});
     (api.enrollFace as jest.Mock).mockResolvedValue({id:"enrollment-1",status:"ACTIVE"});
+    (api.sections as jest.Mock).mockResolvedValue([]);
+    (api.createSection as jest.Mock).mockResolvedValue({ id: "section-new" });
+    (api.updateSection as jest.Mock).mockResolvedValue({ id: "section-1" });
+    (api.setSectionStatus as jest.Mock).mockResolvedValue({ id: "section-1", status: "INACTIVE" });
   });
 
   it("switches through the authenticated organization flow", async () => {
@@ -86,5 +94,38 @@ describe("ProfileScreen organization selector", () => {
   it("captures and enrolls a face through the provider-neutral API",async()=>{
     await render(<ProfileScreen/>);await fireEvent.press(await screen.findByRole("button",{name:"Daftarkan atau perbarui wajah"}));
     await waitFor(()=>expect(api.enrollFace).toHaveBeenCalledWith("active-token","face-image-1"));expect(await screen.findByText("Wajah berhasil didaftarkan untuk verifikasi absensi.")).toBeTruthy();
+  });
+
+  it("lets a supervisor add a showroom from Profile", async () => {
+    (api.me as jest.Mock).mockResolvedValue({
+      id: "supervisor-1",
+      email: "supervisor@bggold.local",
+      fullName: "Sari Supervisor",
+      membershipId: "membership-supervisor",
+      organizationId: "organization-main",
+      employeeNumber: "BG-SPV-01",
+      timezone: "Asia/Jakarta",
+      roles: ["SUPERVISOR"],
+    });
+
+    await render(<ProfileScreen />);
+    await fireEvent.press(await screen.findByRole("button", { name: "Tambah showroom" }));
+    const codeInput = await screen.findByLabelText("kode showroom");
+    await fireEvent.changeText(codeInput, "kemang");
+    await fireEvent.changeText(screen.getByLabelText("nama showroom"), "BG GOLD Kemang");
+    await fireEvent.changeText(screen.getByLabelText("alamat"), "Kemang, Jakarta Selatan");
+    expect(screen.getByDisplayValue("KEMANG")).toBeTruthy();
+    expect(screen.getByDisplayValue("BG GOLD Kemang")).toBeTruthy();
+    await fireEvent.press(screen.getByRole("button", { name: "Simpan showroom" }));
+
+    await waitFor(() =>
+      expect(api.createSection).toHaveBeenCalledWith("active-token", {
+        code: "KEMANG",
+        name: "BG GOLD Kemang",
+        address: "Kemang, Jakarta Selatan",
+        timezone: "Asia/Jakarta",
+      }),
+    );
+    expect(await screen.findByText("Showroom baru berhasil ditambahkan.")).toBeTruthy();
   });
 });

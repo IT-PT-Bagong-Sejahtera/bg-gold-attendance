@@ -12,6 +12,7 @@ import {
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
 import { AccountRegistrationCard } from "../components/AccountRegistrationCard";
+import { ShowroomManagementCard } from "../components/ShowroomManagementCard";
 import { TutorialLauncher } from "../components/GuidedTutorial";
 import { api, type Me, type Organization } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -168,6 +169,17 @@ export function ProfileScreen() {
             {me.roles.some((role) => role === "SUPERVISOR" || role === "OWNER") ? (
               <AccountRegistrationCard token={token} roles={me.roles} />
             ) : null}
+            {me.roles.some(
+              (role) =>
+                role === "SUPERVISOR" ||
+                role === "ADMIN" ||
+                role === "OWNER",
+            ) ? (
+              <ShowroomManagementCard
+                token={token}
+                defaultTimezone={me.timezone}
+              />
+            ) : null}
           </>
         ) : null}
         <View style={styles.security}>
@@ -222,7 +234,7 @@ export function ProfileScreen() {
           {
             target: identityRef,
             title: "Periksa akun dan peran",
-            body: "Pastikan nama, email, nomor karyawan, organisasi, dan peran Anda benar. Supervisor juga dapat mendaftarkan akun karyawan dari halaman ini.",
+            body: "Pastikan nama, email, nomor karyawan, organisasi, dan peran Anda benar. Supervisor juga dapat mendaftarkan akun karyawan serta mengelola master showroom dari halaman ini.",
           },
           {
             target: securityRef,

@@ -17,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
@@ -43,7 +44,12 @@ import { registerPushDevice } from "../lib/pushRegistration";
 import { captureCurrentWiFi } from "../lib/wifiEvidence";
 import { getAttendanceIntegrityToken } from "../lib/deviceIntegrity";
 import { useReducedMotion } from "../lib/useReducedMotion";
-import { formatInstant } from "../lib/timezone";
+import {
+  addCalendarDays,
+  calendarDateInTimeZone,
+  formatInstant,
+  zonedDateTimeToUtc,
+} from "../lib/timezone";
 import {
   flushAttendanceOutbox,
   submitAttendanceResilient,
@@ -53,7 +59,9 @@ import { colors, radius, spacing } from "../theme";
 type EvidencePreview = {
   action: AttendanceAction;
   organizationRecordedAt: string;
+  locationChoiceId?: string;
   sectionId?: string;
+  shiftId?: string;
   locationName?: string;
   latitude?: number;
   longitude?: number;
@@ -65,22 +73,27 @@ type EvidencePreview = {
 };
 type AttendanceLocationChoice = {
   id: string;
+  sectionId: string;
+  shiftId?: string;
   name: string;
   detail: string;
 };
 const DEMO_LOCATIONS: AttendanceLocationChoice[] = [
   {
     id: "demo-section-hq",
+    sectionId: "demo-section-hq",
     name: "BG GOLD Flagship",
     detail: "Galeri utama · Jakarta",
   },
   {
     id: "demo-section-warehouse",
+    sectionId: "demo-section-warehouse",
     name: "BG GOLD Warehouse",
     detail: "Gudang & inventory",
   },
   {
     id: "demo-section-event",
+    sectionId: "demo-section-event",
     name: "Lokasi event",
     detail: "Penugasan luar outlet",
   },
@@ -107,6 +120,7 @@ export function HomeScreen() {
   const [today, setToday] = useState<Today | null>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
+  const [attendanceEvents, setAttendanceEvents] = useState<Shift[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [error, setError] = useState("");
@@ -128,7 +142,7 @@ export function HomeScreen() {
     try {
       const rangeStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const rangeEnd = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const [meData, todayData, shifts, announcementItems, unread] =
+      const [meData, todayData, assignedShifts, announcementItems, unread] =
         await Promise.all([
           api.me(token),
           api.today(token),
@@ -136,9 +150,20 @@ export function HomeScreen() {
           api.announcements(token),
           api.notificationUnreadCount(token),
         ]);
+      const scheduleItems =
+        auth.demoRole === "supervisor"
+          ? await api.supervisorShifts(
+              token,
+              rangeStart.toISOString(),
+              rangeEnd.toISOString(),
+            )
+          : assignedShifts;
+      const workShifts = assignedShifts.filter(
+        (item) => item.scheduleType !== "EVENT",
+      );
       const shift =
-        shifts.find((item) => item.id === todayData.activeShiftId) ??
-        shifts[0] ??
+        workShifts.find((item) => item.id === todayData.activeShiftId) ??
+        workShifts[0] ??
         null;
       const policyData = await api.policy(token, shift?.section.id);
       setMe(meData);
@@ -148,6 +173,21 @@ export function HomeScreen() {
       setToday(todayData);
       setPolicy(policyData);
       setActiveShift(shift);
+      const currentDate = calendarDateInTimeZone(new Date(), meData.timezone);
+      const dayStart = zonedDateTimeToUtc(currentDate, meData.timezone);
+      const dayEnd = zonedDateTimeToUtc(
+        addCalendarDays(currentDate, 1),
+        meData.timezone,
+      );
+      setAttendanceEvents(
+        scheduleItems.filter(
+          (item) =>
+            item.scheduleType === "EVENT" &&
+            item.status === "PUBLISHED" &&
+            new Date(item.startsAt) < dayEnd &&
+            new Date(item.endsAt) > dayStart,
+        ),
+      );
       setAnnouncements(announcementItems);
       setUnreadNotifications(unread.count);
       void registerPushDevice(token, meData.organizationId).catch(
@@ -175,9 +215,11 @@ export function HomeScreen() {
       setLoading(false);
     }
   }, [auth.demoRole, token]);
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
   useEffect(() => {
     if (!me) return;
     return subscribeAttendanceReconnect(
@@ -200,16 +242,28 @@ export function HomeScreen() {
     [today],
   );
   const locationChoices = useMemo<AttendanceLocationChoice[]>(() => {
-    if (auth.isDemo) return DEMO_LOCATIONS;
-    if (!activeShift) return [];
-    return [
-      {
-        id: activeShift.section.id,
-        name: activeShift.section.name,
-        detail: activeShift.roleName ?? "Lokasi shift hari ini",
-      },
-    ];
-  }, [activeShift, auth.isDemo]);
+    const baseLocations = auth.isDemo
+      ? DEMO_LOCATIONS
+      : activeShift
+        ? [
+            {
+              id: activeShift.section.id,
+              sectionId: activeShift.section.id,
+              shiftId: activeShift.id,
+              name: activeShift.section.name,
+              detail: activeShift.roleName ?? "Lokasi shift hari ini",
+            },
+          ]
+        : [];
+    const eventLocations = attendanceEvents.map((event) => ({
+      id: `event-${event.id}`,
+      sectionId: event.section.id,
+      shiftId: event.id,
+      name: event.showroomName?.trim() || event.title,
+      detail: `${event.title} · Event custom hari ini`,
+    }));
+    return [...baseLocations, ...eventLocations];
+  }, [activeShift, attendanceEvents, auth.isDemo]);
   const selectedLocation =
     locationChoices.find((item) => item.id === selectedLocationId) ??
     locationChoices[0];
@@ -228,7 +282,9 @@ export function HomeScreen() {
     const basePreview: EvidencePreview = {
       action: nextAction,
       organizationRecordedAt,
-      sectionId: selectedLocation?.id,
+      locationChoiceId: selectedLocation?.id,
+      sectionId: selectedLocation?.sectionId,
+      shiftId: selectedLocation?.shiftId,
       locationName: selectedLocation?.name,
     };
     try {
@@ -360,7 +416,7 @@ export function HomeScreen() {
       }
       const payload = {
         type: preview.action,
-        shiftId: activeShift?.id,
+        shiftId: preview.shiftId ?? activeShift?.id,
         sectionId: preview.sectionId ?? activeShift?.section.id,
         evidence: {
           employeeName: isDeviceDemo ? attendanceName.trim() : undefined,
@@ -891,7 +947,7 @@ export function HomeScreen() {
                 </Text>
                 <View style={styles.locationOptions}>
                   {locationChoices.map((location) => {
-                    const selected = location.id === preview?.sectionId;
+                    const selected = location.id === preview?.locationChoiceId;
                     return (
                       <Pressable
                         accessibilityLabel={`${location.name}, ${location.detail}`}
@@ -904,11 +960,17 @@ export function HomeScreen() {
                             current
                               ? {
                                   ...current,
-                                  sectionId: location.id,
+                                  locationChoiceId: location.id,
+                                  sectionId: location.sectionId,
+                                  shiftId: location.shiftId,
                                   locationName: location.name,
                                 }
                               : current,
                           );
+                          void api
+                            .policy(token, location.sectionId)
+                            .then(setPolicy)
+                            .catch(() => undefined);
                         }}
                         style={({ pressed }) => [
                           styles.locationOption,
