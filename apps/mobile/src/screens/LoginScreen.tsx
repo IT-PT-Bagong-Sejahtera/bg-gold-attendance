@@ -342,41 +342,7 @@ export function LoginScreen() {
                   <View style={styles.demoCopy}>
                     <Text style={styles.demoButtonText}>Demo supervisor</Text>
                     <Text style={styles.demoCaption}>
-                      Persetujuan absensi, cuti, klaim, dan shift
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={19}
-                    color={colors.espresso}
-                  />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Masuk demo showroom satu HP"
-                  accessibilityHint="Membuka setup satu HP kiosk untuk absensi di showroom"
-                  disabled={loading}
-                  onPress={() => void startDemo("device")}
-                  style={({ pressed }) => [
-                    styles.demoButton,
-                    styles.deviceDemoButton,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <View style={[styles.demoIcon, styles.deviceDemoIcon]}>
-                    <Ionicons
-                      name="phone-portrait-outline"
-                      size={20}
-                      color={colors.white}
-                    />
-                  </View>
-                  <View style={styles.demoCopy}>
-                    <View style={styles.demoTitleRow}>
-                      <Text style={styles.demoButtonText}>Showroom · 1 HP</Text>
-                      <Text style={styles.demoBadge}>BARU</Text>
-                    </View>
-                    <Text style={styles.demoCaption}>
-                      Setup kiosk showroom · foto, nama, dan lokasi
+                      Kelola tim, showroom, dan aktifkan kiosk 1 HP
                     </Text>
                   </View>
                   <Ionicons
@@ -427,7 +393,7 @@ export function LoginScreen() {
           {
             target: loginChoicesRef,
             title: "Masuk atau coba mode demo",
-            body: "Isi email dan kata sandi lalu ketuk Masuk. Untuk mencoba tanpa server, pilih Demo karyawan, Demo supervisor, atau mode Showroom satu HP.",
+            body: "Isi email dan kata sandi lalu ketuk Masuk. Untuk mencoba kiosk satu HP tanpa server, masuk ke Demo supervisor lalu aktifkan kiosk dari menu Profil.",
           },
         ]}
       />

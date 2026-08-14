@@ -132,8 +132,8 @@ func (s *Server) listEmployees(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	var in struct {
-		Email, FullName, EmployeeNumber, JobTitle, Password string
-		Roles                                               []string `json:"roles"`
+		Email, FullName, EmployeeNumber, JobTitle, Password, KioskPIN string
+		Roles                                                         []string `json:"roles"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
@@ -153,6 +153,10 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 		writeValidation(w, r, "Sedikitnya satu peran wajib dipilih.")
 		return
 	}
+	if in.KioskPIN != "" && !validKioskPIN(in.KioskPIN) {
+		writeValidation(w, r, "PIN absensi wajib terdiri dari tepat 6 angka.")
+		return
+	}
 	userID, _ := identity.NewUUID()
 	membershipID, _ := identity.NewUUID()
 	credential := in.Password
@@ -163,6 +167,14 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	var pinHash []byte
+	if in.KioskPIN != "" {
+		pinHash, err = bcrypt.GenerateFromPassword([]byte(in.KioskPIN), bcrypt.DefaultCost)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -198,7 +210,7 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 	if newUser && in.Password == "" {
 		membershipStatus = "INVITED"
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO organization_memberships(id,organization_id,user_id,employee_number,job_title,status) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,NULLIF(?,''),?)`, membershipID, p.OrganizationID, userID, in.EmployeeNumber, in.JobTitle, membershipStatus); err != nil {
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO organization_memberships(id,organization_id,user_id,employee_number,job_title,kiosk_pin_hash,status) VALUES(UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,NULLIF(?,''),NULLIF(?,''),?)`, membershipID, p.OrganizationID, userID, in.EmployeeNumber, in.JobTitle, string(pinHash), membershipStatus); err != nil {
 		writeConflict(w, r, "EMPLOYEE_NUMBER_EXISTS", "Nomor karyawan sudah digunakan.", err)
 		return
 	}

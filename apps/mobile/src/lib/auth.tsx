@@ -72,6 +72,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const raw = await SecureStore.getItemAsync(SESSION_KEY);
         if (!raw) return;
         const stored = JSON.parse(raw) as TokenPair;
+        if (demoRoleFromToken(stored.accessToken) === "device") {
+          // Demo kiosk lama mengikat HP ke satu karyawan. Migrasikan sesi lama
+          // ke supervisor agar kiosk baru selalu diaktifkan dari Profil dan
+          // diikat ke Master Showroom.
+          if (active) await save(createDemoSession("supervisor"));
+          return;
+        }
         if (new Date(stored.accessExpiresAt).getTime() > Date.now() + 30_000) {
           if (active) setSession(stored);
         } else {

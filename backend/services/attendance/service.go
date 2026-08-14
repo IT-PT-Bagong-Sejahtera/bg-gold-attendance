@@ -210,15 +210,19 @@ func (s *Service) Submit(ctx context.Context, principal auth.Principal, idempote
 	if shift != nil {
 		shiftID = shift.ID
 	}
+	source := strings.ToUpper(strings.TrimSpace(input.Source))
+	if source != "KIOSK" {
+		source = "MOBILE"
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO attendance_events(
 			id, organization_id, membership_id, shift_id, section_id, policy_id, action_type,
 			decision, server_recorded_at, reason, policy_snapshot, source, created_by
 		) VALUES(
 			UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(NULLIF(?, '')),
-			UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(?), ?, ?, ?, NULLIF(?, ''), ?, 'MOBILE', UUID_TO_BIN(?)
+			UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(?), ?, ?, ?, NULLIF(?, ''), ?, ?, UUID_TO_BIN(?)
 		)`, eventID, principal.OrganizationID, principal.MembershipID, shiftID, sectionID, policy.ID,
-		string(input.Type), string(decision), now, input.Reason, string(policySnapshot), principal.UserID)
+		string(input.Type), string(decision), now, input.Reason, string(policySnapshot), source, principal.UserID)
 	if err != nil {
 		return Result{}, false, fmt.Errorf("insert attendance event: %w", err)
 	}
@@ -629,9 +633,9 @@ func (s *Service) insertEvidence(ctx context.Context, tx *sql.Tx, eventID string
 		integrityVerdict = string(evidence.IntegrityVerdict)
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO attendance_evidence(event_id, latitude, longitude, accuracy_meters, location_captured_at, attachment_id, face_verification_id, device_id, wifi_ssid, wifi_bssid_hash, integrity_verdict, ip_address)
-		VALUES(UUID_TO_BIN(?), ?, ?, ?, ?, UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(NULLIF(?, '')), ?, ?, ?, INET6_ATON(NULLIF(?, '')))`,
-		eventID, latitude, longitude, accuracy, capturedAt, evidence.AttachmentID, evidence.FaceVerificationID, evidence.DeviceID, wifiSSID, wifiBSSIDHash, integrityVerdict, clientIP)
+		INSERT INTO attendance_evidence(event_id, latitude, longitude, accuracy_meters, location_captured_at, attachment_id, face_verification_id, device_id, kiosk_device_id, wifi_ssid, wifi_bssid_hash, integrity_verdict, ip_address)
+		VALUES(UUID_TO_BIN(?), ?, ?, ?, ?, UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(NULLIF(?, '')), UUID_TO_BIN(NULLIF(?, '')), ?, ?, ?, INET6_ATON(NULLIF(?, '')))`,
+		eventID, latitude, longitude, accuracy, capturedAt, evidence.AttachmentID, evidence.FaceVerificationID, evidence.DeviceID, evidence.KioskDeviceID, wifiSSID, wifiBSSIDHash, integrityVerdict, clientIP)
 	if err != nil {
 		return fmt.Errorf("insert attendance evidence: %w", err)
 	}

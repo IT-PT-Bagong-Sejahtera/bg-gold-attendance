@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { demoRequest, demoUploadAttachment } from "./demoApi";
+import { demoKioskRequest, demoKioskUploadAttachment, demoRequest, demoUploadAttachment } from "./demoApi";
 import {
   createDemoSession,
   DEMO_DEVICE_ACCESS_TOKEN,
@@ -13,6 +13,9 @@ import type {
   SupervisorAttendanceReport,
   Today,
   Section,
+  KioskActivation,
+  KioskContext,
+  KioskEmployeeStatus,
 } from "./api";
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
@@ -236,6 +239,41 @@ it("persists a custom event with its supervisor-entered showroom name", async ()
     showroomName: "Showroom BG GOLD Senayan",
     participants: [{ membershipId: "demo-membership-local" }],
   });
+});
+
+it("lets different employees use one showroom-bound kiosk sequentially", async () => {
+  const kiosk = await demoRequest<KioskActivation>(
+    "/kiosk-devices",
+    { method: "POST", body: JSON.stringify({ sectionId: "demo-section-hq", installationId: "shared-phone-1", deviceLabel: "Kiosk Flagship" }) },
+    DEMO_SUPERVISOR_ACCESS_TOKEN,
+  );
+  const context = await demoKioskRequest<KioskContext>("/kiosk/context", {}, kiosk.token);
+  expect(context.showroom.name).toBe("BG GOLD Flagship");
+  expect(context.employees.map((item) => item.employeeNumber)).toEqual(expect.arrayContaining(["BG-DEMO-01", "BG-0214"]));
+
+  for (const employeeNumber of ["BG-DEMO-01", "BG-0214"]) {
+    const before = await demoKioskRequest<KioskEmployeeStatus>(
+      "/kiosk/employee-status",
+      { method: "POST", body: JSON.stringify({ employeeNumber, pin: "123456" }) },
+      kiosk.token,
+    );
+    expect(before.attendance.state).toBe("NOT_STARTED");
+    const attachment = await demoKioskUploadAttachment(kiosk.token, employeeNumber, "123456", "image/jpeg", `file:///demo/${employeeNumber}.jpg`);
+    await expect(demoKioskRequest(
+      "/kiosk/attendance/actions",
+      { method: "POST", body: JSON.stringify({ employeeNumber, pin: "123456", type: "CLOCK_IN", evidence: { attachmentId: attachment.id } }) },
+      kiosk.token,
+    )).resolves.toMatchObject({ attendanceState: "WORKING" });
+  }
+
+  const ayu = await demoKioskRequest<KioskEmployeeStatus>("/kiosk/employee-status", { method: "POST", body: JSON.stringify({ employeeNumber: "BG-DEMO-01", pin: "123456" }) }, kiosk.token);
+  const dimas = await demoKioskRequest<KioskEmployeeStatus>("/kiosk/employee-status", { method: "POST", body: JSON.stringify({ employeeNumber: "BG-0214", pin: "123456" }) }, kiosk.token);
+  expect(ayu.attendance.state).toBe("WORKING");
+  expect(dimas.attendance.state).toBe("WORKING");
+
+  const report = await demoRequest<SupervisorAttendanceReport>("/attendance/report", {}, DEMO_SUPERVISOR_ACCESS_TOKEN);
+  expect(report.rows.find((row) => row.employeeNumber === "BG-DEMO-01")).toMatchObject({ shiftTitle: "Kiosk Showroom · 1 HP", status: "WORKING" });
+  expect(report.rows.find((row) => row.employeeNumber === "BG-0214")).toMatchObject({ shiftTitle: "Kiosk Showroom · 1 HP", status: "WORKING" });
 });
 
 it("binds Demo 2 to one device and completes clock-in then clock-out", async () => {

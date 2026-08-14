@@ -13,6 +13,8 @@ import { ScheduleScreen } from "./src/screens/ScheduleScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { SupervisorScreen } from "./src/screens/SupervisorScreen";
 import { SupervisorAttendanceScreen } from "./src/screens/SupervisorAttendanceScreen";
+import { KioskScreen } from "./src/screens/KioskScreen";
+import { KioskModeProvider, useKioskMode } from "./src/lib/kioskMode";
 import { api } from "./src/lib/api";
 import { colors } from "./src/theme";
 
@@ -40,6 +42,7 @@ const tabIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
 
 function Root() {
   const { session, ready, demoRole } = useAuth();
+  const kioskMode = useKioskMode();
   const insets = useSafeAreaInsets();
   const [roles, setRoles] = useState<string[] | null>(null);
 
@@ -71,7 +74,7 @@ function Root() {
     };
   }, [demoRole, session?.accessToken]);
 
-  if (!ready || (session && roles === null)) {
+  if (!ready || !kioskMode.ready || (session && roles === null)) {
     return (
       <View style={styles.launch}>
         <Image
@@ -83,6 +86,10 @@ function Root() {
         <Text>Menyiapkan ruang kerja…</Text>
       </View>
     );
+  }
+
+  if (kioskMode.kiosk) {
+    return <KioskScreen />;
   }
 
   if (!session) {
@@ -176,7 +183,7 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" backgroundColor={colors.ivory} />
       <AuthProvider>
-        <Root />
+        <KioskModeProvider><Root /></KioskModeProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

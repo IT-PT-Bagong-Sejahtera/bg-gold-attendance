@@ -13,6 +13,10 @@ async function completeForm() {
   await fireEvent.changeText(screen.getByLabelText("Jabatan akun baru"), "Gallery Advisor");
   await fireEvent.changeText(screen.getByLabelText("Kata sandi awal akun baru"), "AmanSekali-2026!");
   await fireEvent.changeText(screen.getByLabelText("Konfirmasi kata sandi akun baru"), "AmanSekali-2026!");
+  if (screen.queryByLabelText("PIN absensi akun baru")) {
+    await fireEvent.changeText(screen.getByLabelText("PIN absensi akun baru"), "482615");
+    await fireEvent.changeText(screen.getByLabelText("Konfirmasi PIN absensi akun baru"), "482615");
+  }
 }
 
 describe("AccountRegistrationCard", () => {
@@ -31,6 +35,7 @@ describe("AccountRegistrationCard", () => {
         employeeNumber: "BG-044",
         jobTitle: "Gallery Advisor",
         password: "AmanSekali-2026!",
+        kioskPIN: "482615",
         roles: ["EMPLOYEE"],
       }),
     );

@@ -13,6 +13,8 @@ import { Screen } from "../components/Screen";
 import { LoadingRows } from "../components/LoadingRows";
 import { AccountRegistrationCard } from "../components/AccountRegistrationCard";
 import { ShowroomManagementCard } from "../components/ShowroomManagementCard";
+import { KioskActivationCard } from "../components/KioskActivationCard";
+import { EmployeeKioskPINCard } from "../components/EmployeeKioskPINCard";
 import { TutorialLauncher } from "../components/GuidedTutorial";
 import { api, type Me, type Organization } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -179,6 +181,12 @@ export function ProfileScreen() {
                 token={token}
                 defaultTimezone={me.timezone}
               />
+            ) : null}
+            {me.roles.some((role) => role === "SUPERVISOR" || role === "OWNER") ? (
+              <EmployeeKioskPINCard token={token} />
+            ) : null}
+            {me.roles.some((role) => role === "SUPERVISOR" || role === "OWNER") ? (
+              <KioskActivationCard token={token} />
             ) : null}
           </>
         ) : null}

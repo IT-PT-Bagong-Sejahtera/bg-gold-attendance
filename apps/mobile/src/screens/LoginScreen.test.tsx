@@ -129,22 +129,15 @@ describe("LoginScreen", () => {
     );
   });
 
-  it("offers Demo 2 as a one-phone attendance session", async () => {
+  it("requires kiosk activation from the supervisor profile", async () => {
     await render(
       <AuthProvider>
         <LoginScreen />
       </AuthProvider>,
     );
 
-    await fireEvent.press(
-      screen.getByRole("button", { name: "Masuk demo showroom satu HP" }),
-    );
-
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
-      "bg-gold.attendance.session",
-      expect.stringContaining("bg-gold-local-demo-device-access"),
-    );
+    expect(screen.queryByRole("button", { name: "Masuk demo showroom satu HP" })).toBeNull();
+    expect(screen.getByText("Kelola tim, showroom, dan aktifkan kiosk 1 HP")).toBeTruthy();
   });
 
   it("completes the local password recovery flow", async () => {

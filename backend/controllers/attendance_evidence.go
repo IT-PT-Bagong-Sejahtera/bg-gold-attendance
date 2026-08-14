@@ -93,13 +93,14 @@ func (s *Server) writeAttendanceEventEvidence(w http.ResponseWriter, r *http.Req
 		       BIN_TO_UUID(sec.id),sec.name,sec.address,
 		       ev.latitude,ev.longitude,ev.accuracy_meters,ev.location_captured_at,ev.created_at,
 		       BIN_TO_UUID(a.id),a.content_type,a.size_bytes,a.object_key,
-		       BIN_TO_UUID(d.id),d.platform,d.device_label,ev.wifi_ssid,ev.integrity_verdict,
+		       COALESCE(BIN_TO_UUID(d.id),BIN_TO_UUID(kd.id)),COALESCE(d.platform,kd.platform),COALESCE(d.device_label,kd.device_label),ev.wifi_ssid,ev.integrity_verdict,
 		       fv.verified,fv.liveness_passed,fv.similarity_score,fv.provider
 		FROM attendance_events e
 		LEFT JOIN sections sec ON sec.id=e.section_id
 		LEFT JOIN attendance_evidence ev ON ev.event_id=e.id
 		LEFT JOIN attachments a ON a.id=ev.attachment_id AND a.purpose='ATTENDANCE_SELFIE' AND a.finalized_at IS NOT NULL AND a.deleted_at IS NULL
 		LEFT JOIN device_registrations d ON d.id=ev.device_id
+		LEFT JOIN kiosk_devices kd ON kd.id=ev.kiosk_device_id
 		LEFT JOIN face_verifications fv ON fv.id=ev.face_verification_id
 		WHERE e.id=UUID_TO_BIN(?) AND e.organization_id=UUID_TO_BIN(?)`
 	args := []any{eventID, p.OrganizationID}

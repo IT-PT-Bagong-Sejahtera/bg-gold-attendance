@@ -80,6 +80,7 @@ type Evidence struct {
 	WiFi               *WiFiEvidence     `json:"wifi"`
 	FaceVerificationID string            `json:"faceVerificationId"`
 	IntegrityVerdict   json.RawMessage   `json:"-"`
+	KioskDeviceID      string            `json:"-"`
 }
 
 type WiFiEvidence struct {
@@ -105,6 +106,7 @@ type ActionInput struct {
 	SectionID string   `json:"sectionId"`
 	Reason    string   `json:"reason"`
 	Evidence  Evidence `json:"evidence"`
+	Source    string   `json:"-"`
 }
 
 type Result struct {

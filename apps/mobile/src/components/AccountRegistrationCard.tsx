@@ -27,6 +27,8 @@ export function AccountRegistrationCard({
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [kioskPIN, setKioskPIN] = useState("");
+  const [kioskPINConfirmation, setKioskPINConfirmation] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +49,14 @@ export function AccountRegistrationCard({
       setError("Konfirmasi kata sandi belum sama.");
       return;
     }
+    if (accountRole === "EMPLOYEE" && !/^\d{6}$/.test(kioskPIN)) {
+      setError("PIN absensi harus terdiri dari tepat 6 angka.");
+      return;
+    }
+    if (accountRole === "EMPLOYEE" && kioskPIN !== kioskPINConfirmation) {
+      setError("Konfirmasi PIN absensi belum sama.");
+      return;
+    }
     setSaving(true);
     try {
       await api.createEmployee(token, {
@@ -55,6 +65,7 @@ export function AccountRegistrationCard({
         employeeNumber: employeeNumber.trim(),
         jobTitle: jobTitle.trim(),
         password,
+        kioskPIN: accountRole === "EMPLOYEE" ? kioskPIN : "",
         roles: [accountRole],
       });
       setFullName("");
@@ -63,6 +74,8 @@ export function AccountRegistrationCard({
       setJobTitle("");
       setPassword("");
       setPasswordConfirmation("");
+      setKioskPIN("");
+      setKioskPINConfirmation("");
       setAccountRole("EMPLOYEE");
       setNotice(
         accountRole === "SUPERVISOR"
@@ -200,6 +213,15 @@ export function AccountRegistrationCard({
           value={passwordConfirmation}
         />
       </Field>
+      {accountRole === "EMPLOYEE" ? (
+        <View style={styles.pinSection}>
+          <View style={styles.pinHeading}><Ionicons name="keypad-outline" size={18} color={colors.gold} /><View><Text style={styles.pinTitle}>PIN absensi kiosk</Text><Text style={styles.pinCopy}>Enam angka pribadi untuk absen di HP showroom.</Text></View></View>
+          <View style={styles.twoColumns}>
+            <View style={styles.column}><Field label="PIN 6 angka"><TextInput accessibilityLabel="PIN absensi akun baru" keyboardType="number-pad" maxLength={6} secureTextEntry onChangeText={(value) => setKioskPIN(value.replace(/\D/g, ""))} style={styles.input} value={kioskPIN} /></Field></View>
+            <View style={styles.column}><Field label="Ulangi PIN"><TextInput accessibilityLabel="Konfirmasi PIN absensi akun baru" keyboardType="number-pad" maxLength={6} secureTextEntry onChangeText={(value) => setKioskPINConfirmation(value.replace(/\D/g, ""))} style={styles.input} value={kioskPINConfirmation} /></Field></View>
+          </View>
+        </View>
+      ) : null}
 
       {error ? (
         <Text accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.error}>
@@ -275,6 +297,10 @@ const styles = StyleSheet.create({
   passwordInput: { flex: 1, minHeight: 46, color: colors.espresso, paddingLeft: spacing.md },
   eyeButton: { width: 48, minHeight: 46, alignItems: "center", justifyContent: "center" },
   passwordHelp: { color: colors.inkMuted, fontSize: 10, marginTop: 5 },
+  pinSection: { marginTop: spacing.lg, padding: spacing.md, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
+  pinHeading: { flexDirection: "row", alignItems: "center", gap: 10 },
+  pinTitle: { color: colors.espresso, fontWeight: "800" },
+  pinCopy: { color: colors.inkMuted, fontSize: 10, marginTop: 2 },
   error: { color: colors.ruby, fontSize: 12, lineHeight: 18, marginTop: spacing.md },
   notice: { color: colors.emerald, fontSize: 12, lineHeight: 18, marginTop: spacing.md },
   submit: { minHeight: 52, alignItems: "center", justifyContent: "center", backgroundColor: colors.gold, marginTop: spacing.lg, paddingHorizontal: spacing.md },

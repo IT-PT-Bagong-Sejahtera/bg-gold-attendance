@@ -71,7 +71,30 @@ export type CreateEmployeePayload = {
   employeeNumber: string;
   jobTitle: string;
   password: string;
+  kioskPIN?: string;
   roles: Array<"EMPLOYEE" | "SUPERVISOR">;
+};
+export type KioskActivation = {
+  id: string;
+  token: string;
+  sectionId: string;
+  deviceLabel: string;
+};
+export type KioskEmployee = {
+  id: string;
+  fullName: string;
+  employeeNumber: string;
+  jobTitle?: string;
+  pinConfigured: boolean;
+};
+export type KioskContext = {
+  kiosk: { id: string; deviceLabel: string };
+  showroom: { id: string; code: string; name: string; address?: string };
+  employees: KioskEmployee[];
+};
+export type KioskEmployeeStatus = {
+  employee: Omit<KioskEmployee, "pinConfigured">;
+  attendance: Today;
 };
 export type Section = {
   id: string;
@@ -436,6 +459,58 @@ async function uploadAttachment(
   return ((await response.json()) as Envelope<Attachment>).data;
 }
 
+async function kioskRequest<T>(
+  kioskToken: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  if (kioskToken.startsWith("demo-kiosk-")) {
+    const { demoKioskRequest } = await import("./demoApi");
+    return demoKioskRequest<T>(path, init, kioskToken);
+  }
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Kiosk-Token": kioskToken,
+      ...init.headers,
+    },
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as ErrorEnvelope | null;
+    throw new APIError(response.status, payload?.error?.code ?? "KIOSK_REQUEST_FAILED", payload?.error?.message ?? "Permintaan kiosk gagal diproses.");
+  }
+  if (response.status === 204) return undefined as T;
+  return ((await response.json()) as Envelope<T>).data;
+}
+
+async function kioskUploadAttachment(
+  kioskToken: string,
+  employeeNumber: string,
+  pin: string,
+  uri: string,
+  mimeType: string,
+) {
+  if (kioskToken.startsWith("demo-kiosk-")) {
+    const { demoKioskUploadAttachment } = await import("./demoApi");
+    return demoKioskUploadAttachment(kioskToken, employeeNumber, pin, mimeType, uri);
+  }
+  const body = new FormData();
+  body.append("employeeNumber", employeeNumber);
+  body.append("pin", pin);
+  body.append("file", { uri, name: "kiosk-selfie.jpg", type: mimeType } as unknown as Blob);
+  const response = await fetch(`${API_URL}/kiosk/attachments/attendance-selfie`, {
+    method: "POST",
+    headers: { "X-Kiosk-Token": kioskToken },
+    body,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as ErrorEnvelope | null;
+    throw new APIError(response.status, payload?.error?.code ?? "UPLOAD_FAILED", payload?.error?.message ?? "Foto bukti belum dapat dikirim.");
+  }
+  return ((await response.json()) as Envelope<Attachment>).data;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<TokenPair>("/auth/login", {
@@ -468,6 +543,28 @@ export const api = {
       { method: "POST", body: JSON.stringify(payload) },
       token,
     ),
+  activateKiosk: (
+    token: string,
+    payload: { sectionId: string; installationId: string; deviceLabel: string; platform: string; deviceModel?: string },
+  ) => request<KioskActivation>("/kiosk-devices", { method: "POST", body: JSON.stringify(payload) }, token),
+  revokeKiosk: (token: string, kioskId: string) =>
+    request<void>(`/kiosk-devices/${encodeURIComponent(kioskId)}`, { method: "DELETE" }, token),
+  resetEmployeeKioskPIN: (token: string, employeeId: string, pin: string) =>
+    request<void>(`/employees/${encodeURIComponent(employeeId)}/kiosk-pin`, { method: "PATCH", body: JSON.stringify({ pin }) }, token),
+  kioskContext: (kioskToken: string) => kioskRequest<KioskContext>(kioskToken, "/kiosk/context"),
+  kioskEmployeeStatus: (kioskToken: string, employeeNumber: string, pin: string) =>
+    kioskRequest<KioskEmployeeStatus>(kioskToken, "/kiosk/employee-status", { method: "POST", body: JSON.stringify({ employeeNumber, pin }) }),
+  kioskAttendanceAction: (
+    kioskToken: string,
+    payload: { employeeNumber: string; pin: string; type: AttendanceAction; shiftId?: string; evidence: { attachmentId: string; location?: { latitude: number; longitude: number; accuracyMeters: number; capturedAt: string } } },
+    idempotencyKey: string,
+  ) => kioskRequest<{ actionId: string; decision: string; attendanceState: AttendanceState; recordedAt: string; message: string }>(
+    kioskToken,
+    "/kiosk/attendance/actions",
+    { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload) },
+  ),
+  kioskAttendanceSelfie: (kioskToken: string, employeeNumber: string, pin: string, uri: string, mimeType = "image/jpeg") =>
+    kioskUploadAttachment(kioskToken, employeeNumber, pin, uri, mimeType),
   switchOrganization: (token: string, organizationId: string) =>
     request<TokenPair>(
       "/me/active-organization",

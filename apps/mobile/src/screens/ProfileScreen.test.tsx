@@ -17,6 +17,9 @@ jest.mock("../lib/auth", () => ({
     logout: mockLogout,
   }),
 }));
+jest.mock("../lib/kioskMode", () => ({
+  useKioskMode: () => ({ activate: jest.fn(async () => undefined), clear: jest.fn(async () => undefined), kiosk: null, ready: true }),
+}));
 
 jest.mock("../lib/api", () => ({
   api: {
@@ -29,6 +32,9 @@ jest.mock("../lib/api", () => ({
     createSection: jest.fn(),
     updateSection: jest.fn(),
     setSectionStatus: jest.fn(),
+    activateKiosk: jest.fn(),
+    employees: jest.fn(),
+    resetEmployeeKioskPIN: jest.fn(),
   },
 }));
 jest.mock("expo-image-picker",()=>({CameraType:{front:"front"},requestCameraPermissionsAsync:jest.fn(async()=>({granted:true})),launchCameraAsync:jest.fn(async()=>({canceled:false,assets:[{uri:"file:///face.jpg",mimeType:"image/jpeg"}]}))}));
@@ -62,6 +68,7 @@ describe("ProfileScreen organization selector", () => {
     (api.faceImage as jest.Mock).mockResolvedValue({id:"face-image-1"});
     (api.enrollFace as jest.Mock).mockResolvedValue({id:"enrollment-1",status:"ACTIVE"});
     (api.sections as jest.Mock).mockResolvedValue([]);
+    (api.employees as jest.Mock).mockResolvedValue([]);
     (api.createSection as jest.Mock).mockResolvedValue({ id: "section-new" });
     (api.updateSection as jest.Mock).mockResolvedValue({ id: "section-1" });
     (api.setSectionStatus as jest.Mock).mockResolvedValue({ id: "section-1", status: "INACTIVE" });

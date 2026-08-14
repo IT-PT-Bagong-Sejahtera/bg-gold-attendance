@@ -28,6 +28,8 @@ import type {
   SupervisorShiftRequest,
   SupervisorShift,
   Today,
+  KioskContext,
+  KioskEmployeeStatus,
 } from "./api";
 const STORAGE_KEY = "bg-gold.attendance.demo.v4";
 
@@ -63,6 +65,8 @@ type DemoState = {
   supervisorClaims: SupervisorClaim[];
   supervisorShiftRequests: SupervisorShiftRequest[];
   supervisorShifts: SupervisorShift[];
+  kiosk?: { id: string; token: string; sectionId: string; deviceLabel: string; installationId: string };
+  kioskAttendance: Record<string, { state: AttendanceState; events: AttendanceEvent[] }>;
 };
 
 export async function demoUploadAttachment(contentType: string, uri: string) {
@@ -75,6 +79,93 @@ export async function demoUploadAttachment(contentType: string, uri: string) {
     contentType,
     sizeBytes: 128_000,
   };
+}
+
+export async function demoKioskUploadAttachment(
+  kioskToken: string,
+  employeeNumber: string,
+  pin: string,
+  contentType: string,
+  uri: string,
+) {
+  const state = await readState();
+  requireDemoKiosk(state, kioskToken);
+  requireDemoKioskEmployee(employeeNumber, pin);
+  return demoUploadAttachment(contentType, uri);
+}
+
+export async function demoKioskRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  kioskToken: string,
+): Promise<T> {
+  const state = await readState();
+  const kiosk = requireDemoKiosk(state, kioskToken);
+  const input = parseBody(init.body);
+  const method = (init.method ?? "GET").toUpperCase();
+  const section = state.sections.find((item) => item.id === kiosk.sectionId);
+  if (!section || section.status !== "ACTIVE") throw new APIError(401, "KIOSK_UNAUTHENTICATED", "Mode kiosk tidak aktif atau showroom dinonaktifkan.");
+
+  if (path === "/kiosk/context" && method === "GET") {
+    const result: KioskContext = {
+      kiosk: { id: kiosk.id, deviceLabel: kiosk.deviceLabel },
+      showroom: { id: section.id, code: section.code, name: section.name, address: section.address },
+      employees: DEMO_EMPLOYEES.filter((item) => item.status === "ACTIVE" && item.roles.includes("EMPLOYEE")).map((item) => ({
+        id: item.id, fullName: item.fullName, employeeNumber: item.employeeNumber, jobTitle: item.jobTitle, pinConfigured: true,
+      })),
+    };
+    return clone(result) as T;
+  }
+
+  const employee = requireDemoKioskEmployee(String(input.employeeNumber ?? ""), String(input.pin ?? ""));
+  const record = state.kioskAttendance[employee.employeeNumber] ?? { state: "NOT_STARTED" as AttendanceState, events: [] };
+  state.kioskAttendance[employee.employeeNumber] = record;
+  if (path === "/kiosk/employee-status" && method === "POST") {
+    const result: KioskEmployeeStatus = {
+      employee: { id: employee.id, fullName: employee.fullName, employeeNumber: employee.employeeNumber, jobTitle: employee.jobTitle },
+      attendance: { state: record.state, activeShiftId: "demo-shift-today", latestEvents: clone(record.events.slice(0, 5)) },
+    };
+    await writeState(state);
+    return clone(result) as T;
+  }
+  if (path === "/kiosk/attendance/actions" && method === "POST") {
+    const action = String(input.type ?? "") as AttendanceAction;
+    const allowed = (record.state === "NOT_STARTED" && action === "CLOCK_IN") || (record.state === "WORKING" && action === "CLOCK_OUT") || (record.state === "ON_BREAK" && action === "END_BREAK");
+    if (!allowed) throw new APIError(422, "INVALID_ATTENDANCE_STATE", "Tindakan ini tidak sesuai dengan status absensi saat ini.");
+    const evidence = (input.evidence ?? {}) as Record<string, any>;
+    if (!evidence.attachmentId) throw new APIError(422, "SELFIE_REQUIRED", "Foto selfie diperlukan untuk absensi ini.");
+    const nextState: AttendanceState = action === "CLOCK_IN" || action === "END_BREAK" ? "WORKING" : "COMPLETED";
+    const recordedAt = new Date().toISOString();
+    const event: AttendanceEvent = { id: `demo-kiosk-attendance-${Date.now()}`, actionType: action, decision: "APPROVED", recordedAt };
+    record.state = nextState;
+    record.events.unshift(event);
+    const attachment = state.demoAttachments[String(evidence.attachmentId)];
+    state.deviceEvidence[event.id] = {
+      employeeName: employee.fullName,
+      employeeNumber: employee.employeeNumber,
+      detail: {
+        eventId: event.id, actionType: action, decision: "APPROVED", source: "KIOSK", recordedAt,
+        section: { id: section.id, name: section.name, address: section.address },
+        location: evidence.location ? { latitude: Number(evidence.location.latitude), longitude: Number(evidence.location.longitude), accuracyM: Number(evidence.location.accuracyMeters), capturedAt: String(evidence.location.capturedAt) } : undefined,
+        attachment: attachment ? { id: String(evidence.attachmentId), contentType: attachment.contentType, sizeBytes: attachment.sizeBytes, url: attachment.uri } : undefined,
+        device: { id: kiosk.id, platform: "ANDROID", label: kiosk.deviceLabel }, evidenceSavedAt: recordedAt,
+      },
+    };
+    await writeState(state);
+    return { actionId: event.id, decision: "APPROVED", attendanceState: nextState, recordedAt, message: `${action === "CLOCK_IN" ? "Clock-in" : "Clock-out"} berhasil dicatat.` } as T;
+  }
+  throw new APIError(404, "DEMO_ROUTE_NOT_FOUND", "Fitur kiosk demo belum tersedia untuk permintaan ini.");
+}
+
+function requireDemoKiosk(state: DemoState, token: string) {
+  if (!state.kiosk || state.kiosk.token !== token) throw new APIError(401, "KIOSK_UNAUTHENTICATED", "Mode kiosk tidak aktif atau sudah dicabut.");
+  return state.kiosk;
+}
+
+function requireDemoKioskEmployee(employeeNumber: string, pin: string) {
+  const employee = DEMO_EMPLOYEES.find((item) => item.employeeNumber === employeeNumber && item.status === "ACTIVE" && item.roles.includes("EMPLOYEE"));
+  if (!employee || pin !== "123456") throw new APIError(401, "KIOSK_EMPLOYEE_INVALID", "Nomor karyawan atau PIN absensi tidak sesuai.");
+  return employee;
 }
 
 export async function resetDemoData() {
@@ -122,6 +213,27 @@ export async function demoRequest<T>(
       invitationStatus: "NOT_REQUIRED",
     } as T;
   }
+  if (path === "/kiosk-devices" && method === "POST") {
+    ensureDemoSectionManager(demoRole);
+    const section = state.sections.find((item) => item.id === input.sectionId && item.status === "ACTIVE");
+    if (!section) throw new APIError(404, "SHOWROOM_NOT_FOUND", "Showroom aktif tidak ditemukan.");
+    state.kiosk = {
+      id: state.kiosk?.id ?? "demo-kiosk-device",
+      token: `demo-kiosk-${Date.now()}`,
+      sectionId: section.id,
+      deviceLabel: String(input.deviceLabel || "HP Kiosk Demo"),
+      installationId: String(input.installationId || "demo-installation"),
+    };
+    await writeState(state);
+    return clone({ id: state.kiosk.id, token: state.kiosk.token, sectionId: section.id, deviceLabel: state.kiosk.deviceLabel }) as T;
+  }
+  if (path.startsWith("/kiosk-devices/") && method === "DELETE") {
+    ensureDemoSectionManager(demoRole);
+    state.kiosk = undefined;
+    await writeState(state);
+    return undefined as T;
+  }
+  if (path.includes("/kiosk-pin") && method === "PATCH") return undefined as T;
   if (path === "/me/active-organization" && method === "POST") {
     return createDemoSession(demoRole) as T;
   }
@@ -734,6 +846,7 @@ function initialState(): DemoState {
         requestedAt: now.toISOString(),
       },
     ],
+    kioskAttendance: {},
     supervisorShifts: [
       {
         id: "demo-event-showroom",
@@ -799,6 +912,7 @@ async function readState() {
         stored.sections ??= clone(DEMO_SECTIONS);
         stored.demoAttachments ??= {};
         stored.deviceEvidence ??= {};
+        stored.kioskAttendance ??= {};
         return stored;
       }
     } catch {
@@ -1008,6 +1122,31 @@ function supervisorAttendanceReport(
           : 0,
       status: clockOutAt ? "ON_TIME" : "WORKING",
     });
+  }
+  const kioskSection = state.sections.find((item) => item.id === state.kiosk?.sectionId);
+  for (const [employeeNumber, record] of Object.entries(state.kioskAttendance)) {
+    const employee = DEMO_EMPLOYEES.find((item) => item.employeeNumber === employeeNumber);
+    if (!employee || record.events.length === 0) continue;
+    const clockIn = record.events.find((event) => event.actionType === "CLOCK_IN");
+    const clockOut = record.events.find((event) => event.actionType === "CLOCK_OUT");
+    const existing = rows.find((row) => row.employeeNumber === employeeNumber);
+    const kioskRow: SupervisorAttendanceReport["rows"][number] = {
+      membershipId: employee.id,
+      employeeName: employee.fullName,
+      employeeNumber,
+      sectionName: kioskSection?.name ?? "BG GOLD Flagship",
+      shiftTitle: "Kiosk Showroom · 1 HP",
+      shiftStartsAt,
+      shiftEndsAt,
+      clockInAt: clockIn?.recordedAt,
+      clockOutAt: clockOut?.recordedAt,
+      clockInEventId: clockIn?.id,
+      clockOutEventId: clockOut?.id,
+      workMinutes: clockIn && clockOut ? Math.max(0, Math.round((new Date(clockOut.recordedAt).getTime() - new Date(clockIn.recordedAt).getTime()) / 60_000)) : 0,
+      status: clockOut ? "ON_TIME" : "WORKING",
+    };
+    if (existing) Object.assign(existing, kioskRow);
+    else rows.unshift(kioskRow);
   }
   return {
     date: localDate(reportDay),

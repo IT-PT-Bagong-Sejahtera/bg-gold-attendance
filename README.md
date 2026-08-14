@@ -24,12 +24,12 @@ The mobile and admin builds use `https://attendanceapi.bggold.cloud/api/v1`. Con
 
 ## Android demo without MySQL
 
-The mobile login includes **Demo karyawan**, **Demo supervisor**, and **Demo 2 · Satu HP** entry points. None requires the Go API, MySQL, MinIO, an account, or internet access.
+The mobile login includes **Demo karyawan** and **Demo supervisor**. Neither requires the Go API, MySQL, MinIO, an account, or internet access. Mode satu HP diaktifkan oleh supervisor dari **Profil → Mode 1 HP**, sama seperti alur produksi.
 
 - The demo session is kept in Android/iOS secure storage.
 - Sample schedules, attendance state/history, open-shift requests, leave, claims, announcements, and notification state are kept in app-local storage.
 - Clock-in/out, breaks, work-more, leave/claim submission and withdrawal remain interactive across app restarts.
-- **Demo 2 · Satu HP** demonstrates a complete daily attendance flow: the front camera opens automatically, photo and employee name are required, organization time is always visible, and the employee chooses Flagship, Warehouse, or event location. The local installation is bound after clock-in; the same name and HP can clock-out, while a second clock-in on the same organization day remains blocked.
+- **Mode 1 HP** mengikat instalasi Android ke satu Master Showroom, bukan ke satu karyawan. Setiap karyawan memilih nama/nomor, memasukkan PIN pribadi (demo: `123456`), mengambil foto, lalu clock-in/out. Setelah berhasil, kiosk otomatis kembali ke daftar karyawan berikutnya.
 - The supervisor demo opens the **Setujui** tab with sample attendance, leave, claim, and open-shift requests. Approve/reject decisions are saved locally across app restarts and remain visible under **Disetujui**. Attendance evidence can be opened from both the approval queue and attendance result.
 - The supervisor **Hadir** tab lists event/shift participants and can publish a new shift to selected employees.
 - Inside **Setujui → Hasil absensi**, supervisors can review the attendance result for every demo employee and export a formatted `.xlsx` workbook with **Ringkasan** and **Semua Karyawan** sheets through Android's save/share dialog. Choose **Files → Download** in that dialog to keep it in Android's Download folder; the pre-share copy is only temporary app cache.
@@ -37,7 +37,7 @@ The mobile login includes **Demo karyawan**, **Demo supervisor**, and **Demo 2 �
 - A clear banner identifies demo mode; Profile offers **Reset data demo** and **Keluar dari demo**.
 - Normal email/password login is unchanged and continues to use the production-style REST API when infrastructure is available.
 
-For Android Studio, start an AVD and run `npm --workspace @bg-gold/mobile run android`. A standalone test APK is also produced as `apps/mobile/android/app/build/outputs/apk/release/Absen BG.apk`; it runs all three demos without Metro. Choose **Demo 2 · Satu HP** for the photo-and-name flow or **Demo supervisor** for team approvals—no database setup is needed.
+For Android Studio, start an AVD and run `npm --workspace @bg-gold/mobile run android`. A standalone test APK is also produced as `apps/mobile/android/app/build/outputs/apk/release/Absen BG.apk`; it runs without Metro. Untuk mencoba kiosk, pilih **Demo supervisor**, buka **Profil**, pilih Master Showroom, lalu tekan **Aktifkan mode kiosk**.
 
 ## Development without containers
 

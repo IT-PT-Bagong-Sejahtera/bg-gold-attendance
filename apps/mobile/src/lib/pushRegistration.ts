@@ -1,12 +1,11 @@
-import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { api } from "./api";
 import { isDemoAccessToken } from "./demoSession";
+import { installationIdentifier } from "./installationIdentifier";
 
-const INSTALLATION_KEY = "bg-gold.attendance.installation-id.v1";
 const DEVICE_KEY_PREFIX = "bg-gold.attendance.device-id.v1";
 
 const registeredDevices = new Map<string, string>();
@@ -61,14 +60,6 @@ async function registerInstallation(
     }
     throw reason;
   }
-}
-
-async function installationIdentifier() {
-  const current = await SecureStore.getItemAsync(INSTALLATION_KEY);
-  if (current) return current;
-  const created = Crypto.randomUUID();
-  await SecureStore.setItemAsync(INSTALLATION_KEY, created);
-  return created;
 }
 
 async function optionalNativePushToken() {

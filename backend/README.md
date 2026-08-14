@@ -48,10 +48,22 @@ MySQL dan MinIO secara default hanya bind ke `127.0.0.1`; API bind ke `0.0.0.0`.
 - Superadmin dapat membuat akun `SUPERVISOR` atau `EMPLOYEE` beserta kata sandi awalnya.
 - Supervisor dapat membuat akun `EMPLOYEE`, tetapi API menolak pembuatan supervisor atau Superadmin.
 - Sistem menolak pembuatan akun `OWNER` kedua dari endpoint karyawan.
+- Saat membuat karyawan, supervisor menetapkan PIN kiosk 6 angka. PIN hanya disimpan sebagai hash bcrypt dan dapat direset supervisor.
+
+## Mode satu HP / kiosk showroom
+
+1. Supervisor membuat atau memilih Master Showroom.
+2. Dari Profil aplikasi, supervisor mengaktifkan HP sebagai kiosk. Server menerbitkan token acak yang hanya disimpan di secure storage perangkat; database hanya menyimpan hash token.
+3. Kiosk menampilkan karyawan aktif. Karyawan memilih identitas dan memasukkan PIN pribadi.
+4. Status absensi dibaca berdasarkan membership karyawan tersebut, bukan berdasarkan HP.
+5. Foto bukti disimpan sebagai milik karyawan, clock-in/out dicatat dengan sumber `KIOSK`, dan perangkat bukti menunjuk ke kiosk showroom.
+6. Setelah berhasil, aplikasi menghapus PIN dari memori dan kembali ke pemilih karyawan.
+
+Endpoint publik kiosk tetap membutuhkan header `X-Kiosk-Token`; aktivasi/pencabutan kiosk memerlukan sesi supervisor dengan permission `section.manage`. Gunakan HTTPS di server agar PIN dan token tidak pernah melintas sebagai plaintext di jaringan.
 
 ## Migrasi database
 
-Terdapat 16 migrasi SQL versioned di folder `migrations`. Migrasi aman dijalankan berulang karena versi yang sudah tercatat pada tabel `schema_migrations` akan dilewati.
+Terdapat 19 migrasi SQL versioned di folder `migrations`. Migrasi aman dijalankan berulang karena versi yang sudah tercatat pada tabel `schema_migrations` akan dilewati.
 
 - Otomatis: API menjalankan migrasi sebelum mulai menerima request.
 - Manual Docker: `docker compose --profile tools run --rm migrate`.

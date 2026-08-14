@@ -647,6 +647,86 @@ paths:
       responses:
         "204": { description: Device revoked }
         "404": { $ref: "#/components/responses/Error" }
+  /kiosk-devices:
+    post:
+      summary: Activate this installation as a showroom-bound kiosk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivateKiosk" }
+      responses:
+        "201": { description: Kiosk activated; the plaintext token is returned once for secure device storage }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /kiosk-devices/{kioskId}:
+    delete:
+      summary: Revoke an active showroom kiosk
+      parameters:
+        - { in: path, name: kioskId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Kiosk revoked }
+        "404": { $ref: "#/components/responses/Error" }
+  /kiosk/context:
+    get:
+      security: []
+      summary: Load showroom identity and active employee selector for a kiosk
+      parameters:
+        - { in: header, name: X-Kiosk-Token, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Kiosk showroom and active employees }
+        "401": { $ref: "#/components/responses/Error" }
+  /kiosk/employee-status:
+    post:
+      security: []
+      summary: Verify an employee PIN and return that employee's own attendance state
+      parameters:
+        - { in: header, name: X-Kiosk-Token, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KioskCredentials" }
+      responses:
+        "200": { description: Employee identity and individual attendance state }
+        "401": { $ref: "#/components/responses/Error" }
+  /kiosk/attachments/attendance-selfie:
+    post:
+      security: []
+      summary: Store a private attendance selfie owned by the verified kiosk employee
+      parameters:
+        - { in: header, name: X-Kiosk-Token, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [employeeNumber, pin, file]
+              properties:
+                employeeNumber: { type: string }
+                pin: { type: string, pattern: "^[0-9]{6}$" }
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Finalized private attendance selfie }
+        "401": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+  /kiosk/attendance/actions:
+    post:
+      security: []
+      summary: Submit attendance for a PIN-verified employee through the showroom kiosk
+      parameters:
+        - { in: header, name: X-Kiosk-Token, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, maxLength: 160 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KioskAttendanceAction" }
+      responses:
+        "201": { description: Employee attendance recorded with KIOSK source and kiosk device evidence }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /employees:
     get:
       summary: List organization employees
@@ -702,6 +782,22 @@ paths:
         "200": { description: Membership deactivated }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /employees/{employeeId}/kiosk-pin:
+    patch:
+      summary: Reset an employee's six-digit kiosk PIN
+      parameters:
+        - { in: path, name: employeeId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties: { pin: { type: string, pattern: "^[0-9]{6}$" } }
+      responses:
+        "204": { description: PIN hash replaced }
+        "404": { $ref: "#/components/responses/Error" }
   /sections:
     get:
       summary: List work locations
@@ -1141,12 +1237,54 @@ components:
           type: string
           minLength: 12
           description: Initial account password. When omitted, the backend sends a one-time account invitation when email delivery is configured.
+        kioskPIN:
+          type: string
+          pattern: "^[0-9]{6}$"
+          description: Optional during account creation; required before the employee can use kiosk and stored only as a bcrypt hash.
         roles:
           {
             type: array,
             items: { enum: [ADMIN, HR, SUPERVISOR, EMPLOYEE] },
             description: Non-Superadmin callers may only assign EMPLOYEE. OWNER cannot be created through this endpoint.
           }
+    ActivateKiosk:
+      type: object
+      required: [sectionId, installationId, deviceLabel, platform]
+      properties:
+        sectionId: { type: string, format: uuid }
+        installationId: { type: string, minLength: 1, maxLength: 255 }
+        deviceLabel: { type: string, minLength: 1, maxLength: 120 }
+        platform: { enum: [ANDROID, IOS] }
+        deviceModel: { type: string, maxLength: 120 }
+    KioskCredentials:
+      type: object
+      required: [employeeNumber, pin]
+      properties:
+        employeeNumber: { type: string }
+        pin: { type: string, pattern: "^[0-9]{6}$" }
+    AttendanceEvidence:
+      type: object
+      required: [attachmentId]
+      properties:
+        attachmentId: { type: string, format: uuid }
+        location:
+          type: [object, "null"]
+          required: [latitude, longitude, accuracyMeters, capturedAt]
+          properties:
+            latitude: { type: number, minimum: -90, maximum: 90 }
+            longitude: { type: number, minimum: -180, maximum: 180 }
+            accuracyMeters: { type: number, minimum: 0 }
+            capturedAt: { type: string, format: date-time }
+    KioskAttendanceAction:
+      allOf:
+        - { $ref: "#/components/schemas/KioskCredentials" }
+        - type: object
+          required: [type, evidence]
+          properties:
+            type: { enum: [CLOCK_IN, CLOCK_OUT, END_BREAK] }
+            shiftId: { type: string, format: uuid }
+            reason: { type: string }
+            evidence: { $ref: "#/components/schemas/AttendanceEvidence" }
     CreateShift:
       type: object
       required: [sectionId, title, startsAt, endsAt]
