@@ -124,4 +124,30 @@ describe("API access-token renewal", () => {
       Authorization: "Bearer fresh-access-token",
     });
   });
+
+  it("removes display-only evidence fields from production attendance JSON", async () => {
+    fetchMock.mockResolvedValueOnce(response(201, {
+      data: { actionId: "event-1", attendanceState: "WORKING" },
+    }));
+
+    await api.action("production-token", "attendance-key", {
+      type: "CLOCK_IN",
+      sectionId: "section-1",
+      evidence: {
+        employeeName: "Nama dari UI",
+        selectedLocationName: "Nama showroom dari UI",
+        deviceId: "device-1",
+        location: { latitude: -6.2, longitude: 106.8, accuracyMeters: 8, capturedAt: "2026-08-14T05:00:00Z" },
+      },
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      type: "CLOCK_IN",
+      sectionId: "section-1",
+      evidence: { deviceId: "device-1", location: { latitude: -6.2 } },
+    });
+    expect(body.evidence).not.toHaveProperty("employeeName");
+    expect(body.evidence).not.toHaveProperty("selectedLocationName");
+  });
 });

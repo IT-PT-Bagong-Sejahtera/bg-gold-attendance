@@ -23,7 +23,6 @@ export function AccountRegistrationCard({
   const [accountRole, setAccountRole] = useState<AccountRole>("EMPLOYEE");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [employeeNumber, setEmployeeNumber] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
@@ -37,12 +36,12 @@ export function AccountRegistrationCard({
   async function submit() {
     setError("");
     setNotice("");
-    if (!fullName.trim() || !email.trim() || !employeeNumber.trim()) {
-      setError("Nama, email, dan nomor karyawan wajib diisi.");
+    if (!fullName.trim() || !email.trim()) {
+      setError("Nama dan email wajib diisi.");
       return;
     }
-    if (password.length < 12) {
-      setError("Kata sandi harus memiliki sedikitnya 12 karakter.");
+    if (password.length < 8) {
+      setError("Kata sandi harus memiliki sedikitnya 8 karakter.");
       return;
     }
     if (password !== passwordConfirmation) {
@@ -59,10 +58,9 @@ export function AccountRegistrationCard({
     }
     setSaving(true);
     try {
-      await api.createEmployee(token, {
+      const created = await api.createEmployee(token, {
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
-        employeeNumber: employeeNumber.trim(),
         jobTitle: jobTitle.trim(),
         password,
         kioskPIN: accountRole === "EMPLOYEE" ? kioskPIN : "",
@@ -70,7 +68,6 @@ export function AccountRegistrationCard({
       });
       setFullName("");
       setEmail("");
-      setEmployeeNumber("");
       setJobTitle("");
       setPassword("");
       setPasswordConfirmation("");
@@ -79,8 +76,8 @@ export function AccountRegistrationCard({
       setAccountRole("EMPLOYEE");
       setNotice(
         accountRole === "SUPERVISOR"
-          ? "Akun supervisor berhasil dibuat dan sudah dapat digunakan untuk masuk."
-          : "Akun karyawan berhasil dibuat dan sudah dapat digunakan untuk masuk.",
+          ? `Akun supervisor berhasil dibuat dengan nomor ${created.employeeNumber}.`
+          : `Akun karyawan berhasil dibuat dengan nomor ${created.employeeNumber}.`,
       );
     } catch (reason) {
       setError(
@@ -152,30 +149,19 @@ export function AccountRegistrationCard({
           value={email}
         />
       </Field>
-      <View style={styles.twoColumns}>
-        <View style={styles.column}>
-          <Field label="Nomor karyawan">
-            <TextInput
-              accessibilityLabel="Nomor karyawan akun baru"
-              autoCapitalize="characters"
-              onChangeText={setEmployeeNumber}
-              style={styles.input}
-              value={employeeNumber}
-            />
-          </Field>
-        </View>
-        <View style={styles.column}>
-          <Field label="Jabatan">
-            <TextInput
-              accessibilityLabel="Jabatan akun baru"
-              autoCapitalize="words"
-              onChangeText={setJobTitle}
-              style={styles.input}
-              value={jobTitle}
-            />
-          </Field>
-        </View>
+      <View style={styles.autoNumberNote}>
+        <Ionicons name="sparkles-outline" size={17} color={colors.gold} />
+        <Text style={styles.autoNumberText}>Nomor karyawan dibuat otomatis setelah akun disimpan.</Text>
       </View>
+      <Field label="Jabatan">
+        <TextInput
+          accessibilityLabel="Jabatan akun baru"
+          autoCapitalize="words"
+          onChangeText={setJobTitle}
+          style={styles.input}
+          value={jobTitle}
+        />
+      </Field>
       <Field label="Kata sandi awal">
         <View style={styles.passwordRow}>
           <TextInput
@@ -201,7 +187,7 @@ export function AccountRegistrationCard({
           </Pressable>
         </View>
       </Field>
-      <Text style={styles.passwordHelp}>Minimum 12 karakter.</Text>
+      <Text style={styles.passwordHelp}>Minimum 8 karakter.</Text>
       <Field label="Ulangi kata sandi">
         <TextInput
           accessibilityLabel="Konfirmasi kata sandi akun baru"
@@ -288,6 +274,8 @@ const styles = StyleSheet.create({
   roleTextSelected: { color: colors.goldSoft },
   fixedRole: { minHeight: 46, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: 1, borderColor: colors.line, marginTop: spacing.md },
   fixedRoleText: { color: colors.espresso, fontWeight: "700" },
+  autoNumberNote: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.md, padding: spacing.md, backgroundColor: "#F3EAD5", borderLeftWidth: 3, borderLeftColor: colors.gold },
+  autoNumberText: { flex: 1, color: colors.inkMuted, fontSize: 12, lineHeight: 18 },
   field: { marginTop: spacing.md },
   label: { color: colors.inkMuted, fontSize: 11, fontWeight: "600", marginBottom: 7 },
   input: { minHeight: 48, borderWidth: 1, borderColor: "#CFC5AF", backgroundColor: colors.paper, color: colors.espresso, paddingHorizontal: spacing.md },

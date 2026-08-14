@@ -55,6 +55,10 @@ func (s *Service) Submit(ctx context.Context, principal auth.Principal, idempote
 	if strings.TrimSpace(idempotencyKey) == "" || len(idempotencyKey) > 160 {
 		return Result{}, false, errors.New("invalid idempotency key")
 	}
+	// Older mobile builds accidentally sent display-only labels. Accept them at the API boundary,
+	// then remove them before hashing and processing so they cannot influence attendance records.
+	input.Evidence.LegacyEmployeeName = ""
+	input.Evidence.LegacySelectedLocationName = ""
 	requestBody, err := json.Marshal(input)
 	if err != nil {
 		return Result{}, false, fmt.Errorf("marshal attendance request: %w", err)

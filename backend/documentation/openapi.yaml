@@ -79,7 +79,7 @@ paths:
               required: [token, newPassword]
               properties:
                 token: { type: string }
-                newPassword: { type: string, format: password, minLength: 12 }
+                newPassword: { type: string, format: password, minLength: 8 }
       responses:
         "200": { description: Password updated and sessions revoked }
         "422": { $ref: "#/components/responses/Error" }
@@ -732,7 +732,7 @@ paths:
       summary: List organization employees
       responses: { "200": { description: Employee list } }
     post:
-      summary: Create an account (supervisors may create employees; the Superadmin may also create supervisors)
+      summary: Create an account with an automatically generated employee number (supervisors may create employees; the Superadmin may also create supervisors)
       requestBody:
         required: true
         content:
@@ -1227,15 +1227,14 @@ components:
         deviceLabel: { type: string, maxLength: 160 }
     CreateEmployee:
       type: object
-      required: [email, fullName, employeeNumber]
+      required: [email, fullName]
       properties:
         email: { type: string, format: email }
         fullName: { type: string }
-        employeeNumber: { type: string }
         jobTitle: { type: string }
         password:
           type: string
-          minLength: 12
+          minLength: 8
           description: Initial account password. When omitted, the backend sends a one-time account invitation when email delivery is configured.
         kioskPIN:
           type: string

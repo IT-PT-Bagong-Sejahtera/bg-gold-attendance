@@ -35,6 +35,7 @@ const STORAGE_KEY = "bg-gold.attendance.demo.v4";
 
 type DemoState = {
   seedDate: string;
+  nextEmployeeSequence: number;
   sections: Section[];
   attendanceState: AttendanceState;
   attendanceEvents: AttendanceEvent[];
@@ -208,8 +209,12 @@ export async function demoRequest<T>(
         "Supervisor hanya dapat membuat akun karyawan.",
       );
     }
+    const employeeNumber = `BG-${String(state.nextEmployeeSequence).padStart(4, "0")}`;
+    state.nextEmployeeSequence += 1;
+    await writeState(state);
     return {
       id: `demo-employee-${Date.now()}`,
+      employeeNumber,
       invitationStatus: "NOT_REQUIRED",
     } as T;
   }
@@ -730,6 +735,7 @@ function initialState(): DemoState {
   const dayAfterTomorrow = localDate(addDays(now, 2));
   return {
     seedDate: localDate(now),
+    nextEmployeeSequence: 295,
     sections: clone(DEMO_SECTIONS),
     attendanceState: "NOT_STARTED",
     attendanceEvents: [],
@@ -909,6 +915,7 @@ async function readState() {
     try {
       const stored = JSON.parse(raw) as DemoState;
       if (stored.seedDate === localDate(new Date())) {
+        stored.nextEmployeeSequence ??= 295;
         stored.sections ??= clone(DEMO_SECTIONS);
         stored.demoAttachments ??= {};
         stored.deviceEvidence ??= {};

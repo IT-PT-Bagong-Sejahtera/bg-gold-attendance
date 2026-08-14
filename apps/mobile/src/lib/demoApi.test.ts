@@ -105,7 +105,7 @@ it("lets the demo supervisor create only an employee account", async () => {
       },
       DEMO_SUPERVISOR_ACCESS_TOKEN,
     ),
-  ).resolves.toMatchObject({ invitationStatus: "NOT_REQUIRED" });
+  ).resolves.toMatchObject({ employeeNumber: "BG-0295", invitationStatus: "NOT_REQUIRED" });
 
   await expect(
     demoRequest(

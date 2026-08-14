@@ -17,7 +17,7 @@ The Go API is self-contained under [`backend`](backend/README.md), including its
 
 1. Copy `.env.example` to `.env` and replace every secret placeholder.
 2. Run `docker compose up --build`. This starts MySQL, MinIO, Go API, admin, and the React Native Metro service on port `8081`.
-3. Run `docker compose --profile tools run --rm seed` after setting `SEED_SUPERADMIN_EMAIL` and `SEED_SUPERADMIN_PASSWORD` (minimum 12 characters). This creates the single BG GOLD Superadmin account.
+3. Run `docker compose --profile tools run --rm seed` after setting `SEED_SUPERADMIN_EMAIL` and `SEED_SUPERADMIN_PASSWORD` (minimum 8 characters). This creates the single BG GOLD Superadmin account.
 4. Open the admin application at `http://localhost:5173` and API health at `http://localhost:8080/health`.
 
 The mobile and admin builds use `https://attendanceapi.bggold.cloud/api/v1`. Containerized Metro remains available through `http://10.0.2.2:8081` for emulator development. Build/install the native Android shell from Android Studio or use the standalone APK; Compose owns Metro and backend services, not the emulator itself.

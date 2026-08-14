@@ -79,8 +79,11 @@ type Evidence struct {
 	IntegrityToken     string            `json:"integrityToken"`
 	WiFi               *WiFiEvidence     `json:"wifi"`
 	FaceVerificationID string            `json:"faceVerificationId"`
-	IntegrityVerdict   json.RawMessage   `json:"-"`
-	KioskDeviceID      string            `json:"-"`
+	// Legacy client-only labels are accepted for compatibility but never trusted or persisted.
+	LegacyEmployeeName         string          `json:"employeeName,omitempty"`
+	LegacySelectedLocationName string          `json:"selectedLocationName,omitempty"`
+	IntegrityVerdict           json.RawMessage `json:"-"`
+	KioskDeviceID              string          `json:"-"`
 }
 
 type WiFiEvidence struct {

@@ -419,8 +419,12 @@ export function HomeScreen() {
         shiftId: preview.shiftId ?? activeShift?.id,
         sectionId: preview.sectionId ?? activeShift?.section.id,
         evidence: {
-          employeeName: isDeviceDemo ? attendanceName.trim() : undefined,
-          selectedLocationName: preview.locationName,
+          ...(auth.isDemo
+            ? {
+                employeeName: isDeviceDemo ? attendanceName.trim() : undefined,
+                selectedLocationName: preview.locationName,
+              }
+            : {}),
           location:
             preview.latitude === undefined
               ? null

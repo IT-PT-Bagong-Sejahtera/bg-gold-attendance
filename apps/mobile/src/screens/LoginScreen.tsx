@@ -67,7 +67,7 @@ export function LoginScreen() {
     (mode !== "reset" && !email.trim()) ||
     (mode === "login" && !password) ||
     (mode === "reset" &&
-      (!resetToken.trim() || password.length < 12 || !confirmation));
+      (!resetToken.trim() || password.length < 8 || !confirmation));
 
   function changeMode(next: Mode) {
     setMode(next);
@@ -187,7 +187,7 @@ export function LoginScreen() {
                 ? "Masuk untuk melihat jadwal dan mencatat kehadiran Anda."
                 : mode === "forgot"
                   ? "Masukkan email akun. Kami akan mengirim petunjuk bila akun ditemukan."
-                  : "Gunakan token dari petunjuk reset dan pilih kata sandi minimal 12 karakter."}
+                  : "Gunakan token dari petunjuk reset dan pilih kata sandi minimal 8 karakter."}
             </Text>
           </View>
           <View ref={loginChoicesRef} collapsable={false} style={styles.form}>

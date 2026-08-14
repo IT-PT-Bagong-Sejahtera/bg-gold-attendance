@@ -1935,7 +1935,6 @@ function QuickEmployeeForm({
   const [open, setOpen] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [employeeNumber, setEmployeeNumber] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState("");
   const [accountRole, setAccountRole] = useState<"EMPLOYEE" | "SUPERVISOR">("EMPLOYEE");
@@ -1949,6 +1948,7 @@ function QuickEmployeeForm({
     try {
       const created = await request<{
         id: string;
+        employeeNumber: string;
         invitationStatus: "SENT" | "FAILED" | "NOT_CONFIGURED" | "NOT_REQUIRED";
         developmentInviteToken?: string;
       }>(
@@ -1958,7 +1958,6 @@ function QuickEmployeeForm({
           body: JSON.stringify({
             fullName,
             email,
-            employeeNumber,
             jobTitle,
             password: password || undefined,
             roles: [accountRole],
@@ -1968,21 +1967,21 @@ function QuickEmployeeForm({
       );
       setFullName("");
       setEmail("");
-      setEmployeeNumber("");
       setJobTitle("");
       setPassword("");
       setAccountRole("EMPLOYEE");
       setOpen(false);
+      const numberCopy = `Nomor karyawan ${created.employeeNumber}.`;
       setNotice(
         created.invitationStatus === "SENT"
           ? accountRole === "SUPERVISOR"
-            ? "Undangan akun telah dikirim ke email supervisor."
-            : "Undangan akun telah dikirim ke email karyawan."
+            ? `Undangan akun telah dikirim ke email supervisor. ${numberCopy}`
+            : `Undangan akun telah dikirim ke email karyawan. ${numberCopy}`
           : created.developmentInviteToken
-            ? `Mode lokal · token undangan: ${created.developmentInviteToken}`
+            ? `Mode lokal · ${numberCopy} Token undangan: ${created.developmentInviteToken}`
             : created.invitationStatus === "NOT_REQUIRED"
-              ? `${accountRole === "SUPERVISOR" ? "Supervisor" : "Karyawan"} ditambahkan dan sudah dapat masuk.`
-              : "Akun dibuat, tetapi email undangan belum terkirim.",
+              ? `${accountRole === "SUPERVISOR" ? "Supervisor" : "Karyawan"} ditambahkan dan sudah dapat masuk. ${numberCopy}`
+              : `Akun dibuat, tetapi email undangan belum terkirim. ${numberCopy}`,
       );
       onCreated();
     } catch (reason) {
@@ -2025,14 +2024,7 @@ function QuickEmployeeForm({
           required
         />
       </label>
-      <label>
-        Nomor karyawan
-        <input
-          value={employeeNumber}
-          onChange={(e) => setEmployeeNumber(e.target.value)}
-          required
-        />
-      </label>
+      <small className="invite-notice">Nomor karyawan akan dibuat otomatis saat akun disimpan.</small>
       <label>
         Jabatan
         <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
@@ -2064,7 +2056,7 @@ function QuickEmployeeForm({
         Kata sandi sementara (opsional)
         <input
           type="password"
-          minLength={12}
+          minLength={8}
           placeholder="Kosongkan untuk mengirim undangan email"
           value={password}
           onChange={(e) => setPassword(e.target.value)}

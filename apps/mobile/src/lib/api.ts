@@ -68,11 +68,16 @@ export type Employee = {
 export type CreateEmployeePayload = {
   fullName: string;
   email: string;
-  employeeNumber: string;
   jobTitle: string;
   password: string;
   kioskPIN?: string;
   roles: Array<"EMPLOYEE" | "SUPERVISOR">;
+};
+export type CreateEmployeeResult = {
+  id: string;
+  employeeNumber: string;
+  invitationStatus: "SENT" | "FAILED" | "NOT_CONFIGURED" | "NOT_REQUIRED";
+  developmentInviteToken?: string;
 };
 export type KioskActivation = {
   id: string;
@@ -511,6 +516,29 @@ async function kioskUploadAttachment(
   return ((await response.json()) as Envelope<Attachment>).data;
 }
 
+function productionAttendancePayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const input = payload as Record<string, unknown>;
+  const evidence = input.evidence && typeof input.evidence === "object" && !Array.isArray(input.evidence)
+    ? input.evidence as Record<string, unknown>
+    : {};
+  return {
+    type: input.type,
+    shiftId: input.shiftId,
+    sectionId: input.sectionId,
+    reason: input.reason,
+    evidence: {
+      location: evidence.location,
+      attachmentId: evidence.attachmentId,
+      dynamicQrToken: evidence.dynamicQrToken,
+      deviceId: evidence.deviceId,
+      integrityToken: evidence.integrityToken,
+      wifi: evidence.wifi,
+      faceVerificationId: evidence.faceVerificationId,
+    },
+  };
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<TokenPair>("/auth/login", {
@@ -538,7 +566,7 @@ export const api = {
   organizations: (token: string) =>
     request<Organization[]>("/me/organizations", {}, token),
   createEmployee: (token: string, payload: CreateEmployeePayload) =>
-    request<{ id: string; invitationStatus: string }>(
+    request<CreateEmployeeResult>(
       "/employees",
       { method: "POST", body: JSON.stringify(payload) },
       token,
@@ -885,7 +913,9 @@ export const api = {
       {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(
+          isDemoAccessToken(token) ? payload : productionAttendancePayload(payload),
+        ),
       },
       token,
     ),

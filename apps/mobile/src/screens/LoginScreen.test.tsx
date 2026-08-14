@@ -190,11 +190,11 @@ describe("LoginScreen", () => {
     expect(await screen.findByDisplayValue(resetToken)).toBeTruthy();
     await fireEvent.changeText(
       screen.getByLabelText("Kata sandi baru"),
-      "Password-Baru-2026!",
+      "Baru1234",
     );
     await fireEvent.changeText(
       screen.getByLabelText("Ulangi kata sandi baru"),
-      "Password-Baru-2026!",
+      "Baru1234",
     );
     await fireEvent.press(
       screen.getByRole("button", { name: "Perbarui kata sandi" }),

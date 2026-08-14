@@ -259,6 +259,9 @@ describe("HomeScreen attendance flow", () => {
         undefined,
       );
     });
+    const productionPayload = (submitAttendanceResilient as jest.Mock).mock.calls.at(-1)?.[3];
+    expect(productionPayload.evidence).not.toHaveProperty("employeeName");
+    expect(productionPayload.evidence).not.toHaveProperty("selectedLocationName");
     expect(await screen.findByText("Clock out")).toBeTruthy();
     expect(screen.getByText("Tercatat")).toBeTruthy();
   });

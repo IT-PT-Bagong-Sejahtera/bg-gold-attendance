@@ -46,8 +46,8 @@ func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &input) {
 		return
 	}
-	if len(input.NewPassword) < 12 {
-		writeValidation(w, r, "Kata sandi baru minimal 12 karakter.")
+	if len(input.NewPassword) < 8 {
+		writeValidation(w, r, "Kata sandi baru minimal 8 karakter.")
 		return
 	}
 	if err := s.authService.ResetPassword(r.Context(), input.Token, input.NewPassword); err != nil {

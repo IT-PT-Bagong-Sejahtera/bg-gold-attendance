@@ -403,17 +403,18 @@ describe("App", () => {
             string,
             unknown
           >;
+          expect(payload).not.toHaveProperty("employeeNumber");
           employee = {
             id: "employee-2",
             fullName: payload.fullName,
             email: payload.email,
-            employeeNumber: payload.employeeNumber,
+            employeeNumber: "BG-0295",
             jobTitle: payload.jobTitle,
             roles: ["EMPLOYEE"],
             status: "ACTIVE",
           };
           return response(
-            { id: "employee-2", invitationStatus: "SENT" },
+            { id: "employee-2", employeeNumber: "BG-0295", invitationStatus: "SENT" },
             201,
           );
         }
@@ -487,9 +488,6 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("Email"), {
       target: { value: "ayu@bggold.local" },
     });
-    fireEvent.change(screen.getByLabelText("Nomor karyawan"), {
-      target: { value: "BG-017" },
-    });
     fireEvent.change(screen.getByLabelText("Jabatan"), {
       target: { value: "Gold Operations" },
     });
@@ -497,7 +495,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Ayu Pratama")).toBeInTheDocument();
     expect(
-      await screen.findByText("Undangan akun telah dikirim ke email karyawan."),
+      await screen.findByText("Undangan akun telah dikirim ke email karyawan. Nomor karyawan BG-0295."),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Edit profil & peran" }),

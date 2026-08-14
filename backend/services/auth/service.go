@@ -234,7 +234,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) (strin
 
 func (s *Service) ResetPassword(ctx context.Context, rawToken, password string) error {
 	rawToken = strings.TrimSpace(rawToken)
-	if len(rawToken) < 40 || len(password) < 12 {
+	if len(rawToken) < 40 || len(password) < 8 {
 		return ErrInvalidPasswordReset
 	}
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

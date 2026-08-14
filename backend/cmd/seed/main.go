@@ -19,8 +19,8 @@ func main() {
 	dsn := strings.TrimSpace(os.Getenv("MYSQL_DSN"))
 	email := strings.ToLower(strings.TrimSpace(firstEnvironmentValue("SEED_SUPERADMIN_EMAIL", "SEED_ADMIN_EMAIL")))
 	password := firstEnvironmentValue("SEED_SUPERADMIN_PASSWORD", "SEED_ADMIN_PASSWORD")
-	if dsn == "" || email == "" || len(password) < 12 {
-		slog.Error("seed requires MYSQL_DSN, SEED_SUPERADMIN_EMAIL, and SEED_SUPERADMIN_PASSWORD with at least 12 characters")
+	if dsn == "" || email == "" || len(password) < 8 {
+		slog.Error("seed requires MYSQL_DSN, SEED_SUPERADMIN_EMAIL, and SEED_SUPERADMIN_PASSWORD with at least 8 characters")
 		os.Exit(1)
 	}
 	db, err := database.Open(ctx, dsn)
