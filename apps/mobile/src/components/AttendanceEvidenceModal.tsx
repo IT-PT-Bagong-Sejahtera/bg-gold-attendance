@@ -15,6 +15,7 @@ import {
 import { actionLabel } from "../lib/attendance";
 import {
   api,
+  privateApiImageSource,
   type AttendanceEvent,
   type AttendanceEvidenceDetail,
 } from "../lib/api";
@@ -36,11 +37,13 @@ export function AttendanceEvidenceModal({
   const [detail, setDetail] = useState<AttendanceEvidenceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [imageError, setImageError] = useState("");
 
   useEffect(() => {
     let active = true;
     setDetail(null);
     setError("");
+    setImageError("");
     if (!event) return () => undefined;
     setLoading(true);
     void api
@@ -67,8 +70,10 @@ export function AttendanceEvidenceModal({
 
   const imageSource = useMemo<ImageSourcePropType | undefined>(() => {
     const url = detail?.attachment?.url;
-    return url ? (demoEvidenceImage(url) ?? { uri: url }) : undefined;
-  }, [detail?.attachment?.url]);
+    return url
+      ? (demoEvidenceImage(url) ?? privateApiImageSource(url, token))
+      : undefined;
+  }, [detail?.attachment?.url, token]);
   const recordedAt = detail?.recordedAt ?? event?.recordedAt;
   const decision = detail?.decision ?? event?.decision;
 
@@ -162,10 +167,18 @@ export function AttendanceEvidenceModal({
               <View style={styles.photoCard}>
                 <Image
                   accessibilityLabel="Foto bukti absensi Anda"
+                  onError={() => setImageError("Foto selfie belum dapat dimuat. Coba buka detail ini kembali.")}
+                  onLoad={() => setImageError("")}
                   resizeMode="cover"
                   source={imageSource}
                   style={styles.photo}
                 />
+                {imageError ? (
+                  <View accessibilityRole="alert" style={styles.photoError}>
+                    <Ionicons name="image-outline" size={18} color={colors.ruby} />
+                    <Text style={styles.errorText}>{imageError}</Text>
+                  </View>
+                ) : null}
                 <View style={styles.photoCaption}>
                   <Text style={styles.photoTitle}>SELFIE ABSENSI</Text>
                   <View style={styles.privateBadge}>
@@ -303,6 +316,7 @@ const styles = StyleSheet.create({
   errorText: { flex: 1, color: colors.ruby, lineHeight: 19 },
   photoCard: { marginTop: spacing.lg, backgroundColor: colors.paper, borderRadius: radius.panel, overflow: "hidden", borderWidth: 1, borderColor: colors.line },
   photo: { width: "100%", height: 330, backgroundColor: colors.ivoryDeep },
+  photoError: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, backgroundColor: "#FBEFEF" },
   photoCaption: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md },
   photoTitle: { color: colors.espresso, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
   privateBadge: { flexDirection: "row", alignItems: "center", gap: 4 },

@@ -1,6 +1,7 @@
 import {
   APIError,
   api,
+  privateApiImageSource,
   request,
   setAccessTokenRenewalHandler,
 } from "./api";
@@ -149,5 +150,28 @@ describe("API access-token renewal", () => {
     });
     expect(body.evidence).not.toHaveProperty("employeeName");
     expect(body.evidence).not.toHaveProperty("selectedLocationName");
+  });
+});
+
+describe("private API images", () => {
+  it("resolves a private evidence path and sends the access token", () => {
+    expect(
+      privateApiImageSource(
+        "/api/v1/me/attendance/events/event-1/evidence/photo",
+        "access-token",
+      ),
+    ).toEqual({
+      uri: "https://attendanceapi.bggold.cloud/api/v1/me/attendance/events/event-1/evidence/photo",
+      headers: { Authorization: "Bearer access-token" },
+    });
+  });
+
+  it("does not attach credentials to local or external images", () => {
+    expect(privateApiImageSource("file:///selfie.jpg", "secret")).toEqual({
+      uri: "file:///selfie.jpg",
+    });
+    expect(
+      privateApiImageSource("https://images.example.test/selfie.jpg", "secret"),
+    ).toEqual({ uri: "https://images.example.test/selfie.jpg" });
   });
 });

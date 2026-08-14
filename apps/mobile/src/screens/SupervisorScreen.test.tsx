@@ -12,6 +12,10 @@ jest.mock("../lib/auth", () => ({
 }));
 
 jest.mock("../lib/api", () => ({
+  privateApiImageSource: (url: string, token: string) => ({
+    uri: url,
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   api: {
     me: jest.fn(async () => ({ timezone: "Asia/Jakarta" })),
     supervisorAttendanceRequests: jest.fn(),

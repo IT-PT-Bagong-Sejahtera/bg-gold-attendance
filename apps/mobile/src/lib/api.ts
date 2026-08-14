@@ -4,6 +4,17 @@ const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   "https://attendanceapi.bggold.cloud/api/v1";
 
+export function privateApiImageSource(url: string, token: string) {
+  if (/^(?:file|content|data):/i.test(url)) return { uri: url };
+  const apiOrigin = API_URL.replace(/\/api\/v1\/?$/, "");
+  const uri = url.startsWith("/") ? `${apiOrigin}${url}` : url;
+  const isPrivateApiURL =
+    url.startsWith("/") || uri.startsWith(`${apiOrigin}/`);
+  return isPrivateApiURL
+    ? { uri, headers: { Authorization: `Bearer ${token}` } }
+    : { uri };
+}
+
 export type TokenPair = {
   accessToken: string;
   accessExpiresAt: string;

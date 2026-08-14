@@ -27,6 +27,7 @@ import { Screen } from "../components/Screen";
 import { actionLabel } from "../lib/attendance";
 import {
   api,
+  privateApiImageSource,
   type AttendanceEvidenceDetail,
   type ApprovalDecision,
   type SupervisorAttendanceRequest,
@@ -1105,6 +1106,7 @@ function AttendanceDetailModal({
   );
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
+  const [imageError, setImageError] = useState("");
   const item = detail?.item;
   const eventId =
     detail?.kind === "request"
@@ -1123,12 +1125,14 @@ function AttendanceDetailModal({
     );
     setEvidence(null);
     setEvidenceError("");
+    setImageError("");
   }, [detail]);
 
   useEffect(() => {
     let active = true;
     setEvidence(null);
     setEvidenceError("");
+    setImageError("");
     if (!detail || !eventId) {
       setEvidenceLoading(false);
       return () => {
@@ -1162,9 +1166,8 @@ function AttendanceDetailModal({
   const longitude = evidence?.location?.longitude ?? fallbackRequest?.longitude;
   const accuracy = evidence?.location?.accuracyM ?? fallbackRequest?.accuracyM;
   const imageSource: ImageSourcePropType | undefined = evidence?.attachment?.url
-    ? (demoEvidenceImage(evidence.attachment.url) ?? {
-        uri: evidence.attachment.url,
-      })
+    ? (demoEvidenceImage(evidence.attachment.url) ??
+      privateApiImageSource(evidence.attachment.url, token))
     : undefined;
   const status =
     detail?.kind === "request" ? detail.item.status : evidence?.decision;
@@ -1318,10 +1321,18 @@ function AttendanceDetailModal({
                 <View style={styles.photoCard}>
                   <Image
                     accessibilityLabel={`Foto bukti absensi ${item?.employeeName ?? "karyawan"}`}
+                    onError={() => setImageError("Foto selfie belum dapat dimuat. Silakan buka detail kembali.")}
+                    onLoad={() => setImageError("")}
                     resizeMode="cover"
                     source={imageSource}
                     style={styles.evidencePhoto}
                   />
+                  {imageError ? (
+                    <View accessibilityRole="alert" style={styles.evidenceError}>
+                      <Ionicons name="image-outline" size={18} color={colors.ruby} />
+                      <Text style={styles.evidenceErrorText}>{imageError}</Text>
+                    </View>
+                  ) : null}
                   <View style={styles.photoCaption}>
                     <View style={styles.photoCaptionCopy}>
                       <Text style={styles.photoLabel}>SELFIE ABSENSI</Text>

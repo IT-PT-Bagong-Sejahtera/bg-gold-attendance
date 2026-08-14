@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,11 +17,11 @@ import (
 )
 
 type attendanceEvidenceAttachment struct {
-	ID          string    `json:"id"`
-	ContentType string    `json:"contentType"`
-	SizeBytes   int64     `json:"sizeBytes"`
-	URL         string    `json:"url,omitempty"`
-	ExpiresAt   time.Time `json:"expiresAt,omitempty"`
+	ID          string     `json:"id"`
+	ContentType string     `json:"contentType"`
+	SizeBytes   int64      `json:"sizeBytes"`
+	URL         string     `json:"url,omitempty"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
 }
 
 type attendanceEvidenceLocation struct {
@@ -71,6 +73,14 @@ func (s *Server) attendanceEventEvidence(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) myAttendanceEventEvidence(w http.ResponseWriter, r *http.Request) {
 	s.writeAttendanceEventEvidence(w, r, true)
+}
+
+func (s *Server) attendanceEventEvidencePhoto(w http.ResponseWriter, r *http.Request) {
+	s.writeAttendanceEventEvidencePhoto(w, r, false)
+}
+
+func (s *Server) myAttendanceEventEvidencePhoto(w http.ResponseWriter, r *http.Request) {
+	s.writeAttendanceEventEvidencePhoto(w, r, true)
 }
 
 func (s *Server) writeAttendanceEventEvidence(w http.ResponseWriter, r *http.Request, ownOnly bool) {
@@ -146,13 +156,11 @@ func (s *Server) writeAttendanceEventEvidence(w http.ResponseWriter, r *http.Req
 	if attachmentID.Valid {
 		attachment := &attendanceEvidenceAttachment{ID: attachmentID.String, ContentType: attachmentContentType.String, SizeBytes: attachmentSize.Int64}
 		if objectKey.Valid && s.objects != nil {
-			expiresAt := time.Now().UTC().Add(5 * time.Minute)
-			signed, signErr := s.objects.PresignedGetObject(r.Context(), s.objectBucket, objectKey.String, 5*time.Minute, url.Values{})
-			if signErr != nil {
-				httpx.WriteError(w, r, signErr)
-				return
+			prefix := "/api/v1/attendance"
+			if ownOnly {
+				prefix = "/api/v1/me/attendance"
 			}
-			attachment.URL, attachment.ExpiresAt = signed.String(), expiresAt
+			attachment.URL = fmt.Sprintf("%s/events/%s/evidence/photo", prefix, url.PathEscape(eventID))
 		}
 		item.Attachment = attachment
 	}
@@ -172,4 +180,60 @@ func (s *Server) writeAttendanceEventEvidence(w http.ResponseWriter, r *http.Req
 		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"data": item, "requestId": httpx.RequestID(r.Context())})
+}
+
+func (s *Server) writeAttendanceEventEvidencePhoto(w http.ResponseWriter, r *http.Request, ownOnly bool) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	eventID := strings.TrimSpace(chi.URLParam(r, "eventID"))
+	query := `
+		SELECT a.object_key,a.content_type,a.size_bytes
+		FROM attendance_events e
+		JOIN attendance_evidence ev ON ev.event_id=e.id
+		JOIN attachments a ON a.id=ev.attachment_id
+		WHERE e.id=UUID_TO_BIN(?) AND e.organization_id=UUID_TO_BIN(?)
+		  AND a.purpose='ATTENDANCE_SELFIE' AND a.finalized_at IS NOT NULL AND a.deleted_at IS NULL`
+	args := []any{eventID, p.OrganizationID}
+	if ownOnly {
+		query += ` AND e.membership_id=UUID_TO_BIN(?)`
+		args = append(args, p.MembershipID)
+	}
+	var objectKey, contentType string
+	var sizeBytes int64
+	if err := s.db.QueryRowContext(r.Context(), query, args...).Scan(&objectKey, &contentType, &sizeBytes); errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusNotFound, Code: "ATTENDANCE_PHOTO_NOT_FOUND", Message: "Foto bukti absensi tidak ditemukan."})
+		return
+	} else if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if s.objects == nil {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusServiceUnavailable, Code: "EVIDENCE_STORAGE_UNAVAILABLE", Message: "Penyimpanan bukti belum tersedia."})
+		return
+	}
+	signed, err := s.objects.PresignedGetObject(r.Context(), s.objectBucket, objectKey, 2*time.Minute, url.Values{})
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("authorize attendance evidence download: %w", err))
+		return
+	}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, signed.String(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("prepare attendance evidence download: %w", err))
+		return
+	}
+	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(request)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("download attendance evidence: %w", err))
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		httpx.WriteError(w, r, &httpx.Error{Status: http.StatusBadGateway, Code: "EVIDENCE_STORAGE_ERROR", Message: "Foto bukti belum dapat dimuat."})
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", sizeBytes))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, io.LimitReader(response.Body, maximumEvidenceBytes+1))
 }
